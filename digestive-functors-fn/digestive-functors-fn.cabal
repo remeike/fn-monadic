@@ -1,0 +1,32 @@
+name:           digestive-functors-fn
+version:        0.1.0.0
+description:    A helper library for using digestive functors in Fn
+homepage:       https://github.com/githubuser/fn-monadic#readme
+bug-reports:    https://github.com/githubuser/fn-monadic/issues
+author:         Remeike Forbes
+maintainer:     dev@jacobinmag.com
+copyright:      2021 Remeike Forbes
+category:       Web
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+
+source-repository head
+  type:     git
+  location: https://github.com/githubuser/fn-monadic
+
+library
+  hs-source-dirs:      src
+  exposed-modules:     Web.Fn.Monadic.Digestive
+  build-depends:       base >= 4.7 && < 6
+                     , bytestring
+                     , digestive-functors
+                     , fn-monadic
+                     , http-types
+                     , mtl
+                     , resourcet
+                     , text
+                     , wai >= 3
+                     , wai-extra >= 3
+  default-language:    Haskell2010
+  ghc-options:         -Wall
