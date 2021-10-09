@@ -12,7 +12,6 @@ module Web.Fn.Monadic
   , Req
   , Route
   , route
-  , subroute
   , fallthrough
   , (==>)
   , (!=>)
@@ -177,11 +176,6 @@ route pths =
 
               Just resp ->
                 return (Just resp)
-
-
-subroute :: Fn m => [Route m] -> Route m
-subroute =
-  const . return . Just . route
 
 
 fallthrough :: (Monad m) => m (Maybe Response) -> m Response -> m Response
