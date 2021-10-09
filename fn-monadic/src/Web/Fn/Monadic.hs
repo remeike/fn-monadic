@@ -42,11 +42,13 @@ module Web.Fn.Monadic
   , notFoundHtml
   , redirect
   , redirectReferer
+  -- * Redirect Responses
+  , redirect301
+  , redirect302
+  , redirect303
   -- * Text Responses
   , text
   , text200
-  , text301
-  , text302
   , text403
   , text404
   , text410
@@ -55,8 +57,6 @@ module Web.Fn.Monadic
   -- * HTML Responses
   , html
   , html200
-  , html301
-  , html302
   , html403
   , html404
   , html410
@@ -65,8 +65,6 @@ module Web.Fn.Monadic
   -- * JSON Responses
   , json
   , json200
-  , json301
-  , json302
   , json403
   , json404
   , json410
@@ -95,6 +93,7 @@ import           Data.Aeson                          ( ToJSON, encode )
 import           Data.ByteString                     ( ByteString )
 import           Data.ByteString.Builder             ( lazyByteString )
 import           Data.Text                           ( Text )
+import qualified Data.Text.Encoding                 as Text
 import           Network.HTTP.Types                  ( Status
                                                      , StdMethod(..)
                                                      , ResponseHeaders
@@ -374,6 +373,27 @@ redirectReferer =
   getRequest >>= liftIO . Fn.redirectReferer
 
 
+--------------------------------------------------------------------------------
+
+
+redirect301 :: Text -> IO (Maybe Response)
+redirect301 target =
+  return . Just
+    $ responseBuilder Http.status301 [(Http.hLocation, Text.encodeUtf8 target)]
+    $ Blaze.fromText ""
+
+
+redirect302 :: Text -> IO (Maybe Response)
+redirect302 target =
+  return . Just
+    $ responseBuilder Http.status302 [(Http.hLocation, Text.encodeUtf8 target)]
+    $ Blaze.fromText ""
+
+
+redirect303 :: Fn m => Text -> m (Maybe Response)
+redirect303 =
+  redirect
+
 
 --------------------------------------------------------------------------------
 
@@ -387,16 +407,6 @@ text status content body =
 text200 :: Fn m => ByteString -> Text -> m (Maybe Response)
 text200 content body =
   text Http.status200 content body
-
-
-text301 :: Fn m => ByteString -> Text -> m (Maybe Response)
-text301 content body =
-  text Http.status301 content body
-
-
-text302 :: Fn m => ByteString -> Text -> m (Maybe Response)
-text302 content body =
-  text Http.status302 content body
 
 
 text403 :: Fn m => ByteString -> Text -> m (Maybe Response)
@@ -435,16 +445,6 @@ html status body =
 html200 :: Fn m => Text -> m (Maybe Response)
 html200 =
   html Http.status200
-
-
-html301 :: Fn m => Text -> m (Maybe Response)
-html301 =
-  html Http.status301
-
-
-html302 :: Fn m => Text -> m (Maybe Response)
-html302 =
-  html Http.status302
 
 
 html403 :: Fn m => Text -> m (Maybe Response)
@@ -487,16 +487,6 @@ json status val =
 json200 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
 json200 =
   json Http.status200
-
-
-json301 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
-json301 =
-  json Http.status301
-
-
-json302 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
-json302 =
-  json Http.status302
 
 
 json403 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
