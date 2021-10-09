@@ -42,8 +42,6 @@ module Web.Fn.Monadic
   , notFoundHtml
   , redirect
   , redirectReferer
-  -- * Helpers
-  , Fn.tempFileBackEnd'
   -- * Text Responses
   , text
   , text200
@@ -76,6 +74,8 @@ module Web.Fn.Monadic
   , json503
   , stream
   , streamFile
+  -- * Helpers
+  , Fn.tempFileBackEnd'
   ) where
 
 --------------------------------------------------------------------------------
@@ -190,7 +190,12 @@ fallthrough a ft = do
   a >>= maybe ft return
 
 
-(==>) :: Fn m => (Req -> m (Maybe (Req, k -> a))) -> k -> Req -> m (Maybe a)
+(==>) ::
+  Fn m =>
+  (Req -> m (Maybe (Req, k -> m (Maybe a)))) ->
+  k ->
+  Req ->
+  m (Maybe (m (Maybe a)))
 (match ==> handle) req = do
    rsp <- match req
    case rsp of
@@ -199,8 +204,7 @@ fallthrough a ft = do
 
      Just ((_,pathInfo',_,_,_), k) -> do
        (r, mv) <- getRequest
-       setRequest (r { pathInfo = pathInfo' }, mv)
-         $ return (Just (k handle))
+       return $ Just $ setRequest (r { pathInfo = pathInfo' }, mv) (k handle)
 
 
 readBody :: MVar (Maybe (([Param], [Parse.File FilePath]), InternalState)) -> Request -> IO ()
@@ -217,7 +221,12 @@ readBody mv req =
           return r
 
 
-(!=>) :: Fn m => (Req -> m (Maybe (Req, k -> a))) -> k -> Req -> m (Maybe a)
+(!=>) ::
+  Fn m =>
+  (Req -> m (Maybe (Req, k -> m (Maybe a)))) ->
+  k ->
+  Req ->
+  m (Maybe (m (Maybe a)))
 (match !=> handle) req = do
   getRequest >>=
     \case
@@ -232,8 +241,8 @@ readBody mv req =
             return Nothing
 
           Just ((_,pathInfo',_,_,_), k) -> do
-            setRequest (r { pathInfo = pathInfo' }, Just mv)
-              $ return (Just (k handle))
+            return $ Just $
+              setRequest (r { pathInfo = pathInfo' }, Just mv) (k handle)
 
 
 (//) ::
@@ -527,7 +536,8 @@ stream headers body =
 streamFile :: Fn m => ByteString -> StreamingBody -> m (Maybe Response)
 streamFile filename body =
   stream
-    [ ("Content-Disposition"
-      , "attachment; filename=\"" <> filename <> "\"")
+    [ ( "Content-Disposition"
+      , "attachment; filename=\"" <> filename <> "\""
+      )
     ]
     body
