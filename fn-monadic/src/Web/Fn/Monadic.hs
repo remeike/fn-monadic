@@ -249,7 +249,7 @@ route pths =
 -- — this is what 'fallthrough' allows you to specify. In particular,
 -- 'notFoundText' and 'notFoundHtml' may be useful.
 
-fallthrough :: Monad m => m (Maybe Response) -> m Response -> m Response
+fallthrough :: Fn m => m (Maybe Response) -> m Response -> m Response
 fallthrough a ft = do
   a >>= maybe ft return
 
@@ -310,7 +310,7 @@ fallthrough a ft = do
 -- testing.
 
 (//) ::
-  Monad m =>
+  Fn m =>
   (r -> m (Maybe (r, k -> k'))) ->
   (r -> m (Maybe (r, k' -> a))) ->
   r -> m (Maybe (r, k -> a))
@@ -328,7 +328,7 @@ fallthrough a ft = do
 -- | Matches a literal part of the path. If there is no path part
 -- left, or the next part does not match, the whole match fails.
 
-path :: Monad m => Text -> Req -> m (Maybe (Req, a -> a))
+path :: Fn m => Text -> Req -> m (Maybe (Req, a -> a))
 path s req =
   return $
     case req of
@@ -339,7 +339,7 @@ path s req =
 -- | Matches there being no parts of the path left. This is useful when
 -- matching index routes.
 
-end :: Monad m => Req -> m (Maybe (Req, a -> a))
+end :: Fn m => Req -> m (Maybe (Req, a -> a))
 end req =
   return $
     case req of
@@ -349,7 +349,7 @@ end req =
 
 -- | Matches anything.
 
-anything :: Monad m => Req -> m (Maybe (Req, a -> a))
+anything :: Fn m => Req -> m (Maybe (Req, a -> a))
 anything req =
   return $ Just (req, id)
 
@@ -358,7 +358,7 @@ anything req =
 -- specified by the handler it is matched to. If there is no segment, or
 -- if the segment cannot be parsed as such, it won't match.
 
-segment :: (Monad m, FromParam p) => Req -> m (Maybe (Req, (p -> a) -> a))
+segment :: (Fn m, FromParam p) => Req -> m (Maybe (Req, (p -> a) -> a))
 segment req =
   return $
     case req of
@@ -374,7 +374,7 @@ segment req =
 
 -- | Matches on a particular HTTP method.
 
-method :: Monad m => StdMethod -> Req -> m (Maybe (Req, a -> a))
+method :: Fn m => StdMethod -> Req -> m (Maybe (Req, a -> a))
 method m r@(_,_,_,m',_) | m == m' = return $ Just (r, id)
 method _ _                        = return Nothing
 
@@ -460,7 +460,7 @@ instance FromParam a => FromParam (Maybe a) where
 -- match query parameters.
 
 param ::
-  (MonadIO m, FromParam p) => Text -> Req -> m (Maybe (Req, (p -> a) -> a))
+  (Fn m, FromParam p) => Text -> Req -> m (Maybe (Req, (p -> a) -> a))
 param n req@(_,_,q,_,mv) = do
   ps <- liftIO (getMVarParams mv)
   return $
@@ -473,7 +473,7 @@ param n req@(_,_,q,_,mv) = do
 -- is not present or cannot be parsed into the type expected by the handler.
 
 paramDef ::
-  (MonadIO m, FromParam p) => Text -> p -> Req -> m (Maybe (Req, (p -> a) -> a))
+  (Fn m, FromParam p) => Text -> p -> Req -> m (Maybe (Req, (p -> a) -> a))
 paramDef n def req =
   param n req >>=
     \case
@@ -492,7 +492,7 @@ paramDef n def req =
 -- match query parameters.
 
 paramOpt ::
-  (MonadIO m, FromParam p) =>
+  (Fn m, FromParam p) =>
   Text -> Req -> m (Maybe (Req, (Either ParamError p -> a) -> a))
 paramOpt n req@(_,_,q,_,mv) = do
   ps <- liftIO (getMVarParams mv)
@@ -510,7 +510,7 @@ data File =
 
 -- | Matches an uploaded file with the given parameter name.
 
-file :: MonadIO m => Text -> Req -> m (Maybe (Req, (File -> a) -> a))
+file :: Fn m => Text -> Req -> m (Maybe (Req, (File -> a) -> a))
 file n req@(r,_,_,_,mv) = do
   fs <- liftIO (getMVarFiles mv r)
   return $
@@ -522,7 +522,7 @@ file n req@(r,_,_,_,mv) = do
 -- | Matches all uploaded files, passing their parameter names and
 -- contents.
 
-files :: MonadIO m => Req -> m (Maybe (Req, ([(Text, File)] -> a) -> a))
+files :: Fn m => Req -> m (Maybe (Req, ([(Text, File)] -> a) -> a))
 files req@(r,_,_,_,mv) = do
   fs <- liftIO (getMVarFiles mv r)
   return $ Just (req, \k -> k fs)
