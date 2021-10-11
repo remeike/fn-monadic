@@ -694,8 +694,8 @@ redirect302 target =
 -- Note that the target is not validated, so it should be an absolute path/url.
 
 redirect303 :: Fn m => Text -> m (Maybe Response)
-redirect303 =
-  redirect
+redirect303 target =
+  redirect3xx Http.status303 target
 
 
 --------------------------------------------------------------------------------
