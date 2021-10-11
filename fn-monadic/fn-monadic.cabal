@@ -22,8 +22,10 @@ library
                      , aeson
                      , blaze-builder
                      , bytestring
-                     , fn
+                     , directory
+                     , filepath
                      , http-types
+                     , mime-types
                      , resourcet
                      , text
                      , wai >= 3
