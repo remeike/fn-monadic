@@ -24,6 +24,7 @@ module Web.Fn.Monadic
   , FromParam(..)
   , ParamError(..)
   , param
+  , paramMany
   , paramDef
   , paramOpt
   , File(..)
@@ -201,7 +202,7 @@ type Route m = Req -> m (Maybe (m (Maybe Response)))
 -- app =
 --   route
 --     [ end ==> index
---     , path "foo" \/\/ path "bar" \/\/ segment \/? param "id" ==> h
+--     , path "foo" \/\/ path "bar" \/\/ segment \/\/ param "id" ==> h
 --     ]
 --
 --   where
@@ -468,6 +469,20 @@ param n req@(_,_,q,_,mv) = do
     case findParamMatches n (q ++ map (second Just) ps) of
       Right y -> Just (req, \k -> k y)
       Left _  -> Nothing
+
+
+{-# DEPRECATED paramMany "Use 'param' with a list type, or define param parsing for non-empty list." #-}
+-- | Matches on query parameters of the given name. If there are no
+-- parameters, or they cannot be parsed into the type needed by the
+-- handler, it won't match.
+
+paramMany :: (MonadIO m, FromParam p) => Text -> Req -> m (Maybe (Req, ([p] -> a) -> a))
+paramMany n req@(_,_,q,_,mv) = do
+  ps <- liftIO (getMVarParams mv)
+  return $
+    case findParamMatches n (q ++ map (second Just) ps) of
+      Left _   -> Nothing
+      Right ys -> Just (req, \k -> k ys)
 
 
 -- | Like 'param' but provides a default value to the handler if the parameter

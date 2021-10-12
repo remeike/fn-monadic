@@ -1,6 +1,7 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE OverloadedStrings          #-}
 
 {-|
 
@@ -45,7 +46,7 @@ module Web.Fn
   , Fn.FromParam(..)
   , Fn.ParamError(..)
   , Fn.param
-  -- , Fn.paramMany
+  , Fn.paramMany
   , Fn.paramOpt
   , Fn.File(..)
   , Fn.file
@@ -67,7 +68,10 @@ module Web.Fn
   ) where
 
 --------------------------------------------------------------------------------
-import           Control.Monad.Trans.Reader ( ReaderT(..), ask, local )
+import           Control.Monad.IO.Class     ( MonadIO )
+import           Control.Monad.Reader       ( MonadReader, ReaderT(..)
+                                            , ask, local
+                                            )
 import           Data.Text                  ( Text )
 import           Network.Wai                ( Application, Request(..), Response )
 import           Web.Fn.Monadic             ( Fn, FnRequest, Req )
@@ -123,7 +127,13 @@ type Route ctxt = ctxt -> Req -> IO (Maybe (IO (Maybe Response)))
 -- Note that 'requestLens' is defined in terms of 'getRequest' and
 -- 'setRequest' and vice-versa, so you need to define _one_ of these.
 
-instance RequestContext ctxt => Fn (ReaderT ctxt IO) where
+
+newtype FnCtxt ctxt a =
+  FnCtxt { unFnCtxt :: ReaderT ctxt IO a }
+  deriving ( Functor, Applicative, Monad, MonadIO, MonadReader ctxt )
+
+
+instance RequestContext ctxt => Fn (FnCtxt ctxt) where
   getRequest = fmap getRequest ask
   setRequest req = local (\ctxt -> setRequest ctxt req)
 
@@ -134,7 +144,8 @@ instance RequestContext ctxt => Fn (ReaderT ctxt IO) where
 
 toWAI :: RequestContext ctxt => ctxt -> (ctxt -> IO Response) -> Application
 toWAI ctxt f req cont =
-  Fn.toWai (\app -> (runReaderT app) ctxt) (ReaderT f) req cont
+  Fn.toWai
+    (\app -> (runReaderT (unFnCtxt app)) ctxt) (FnCtxt (ReaderT f)) req cont
 
 
 -- | The main construct for Fn, 'route' takes a context (which it will pass
@@ -146,7 +157,7 @@ toWAI ctxt f req cont =
 -- app ctxt =
 --   route ctxt
 --     [ end ==> index
---     , path "foo" \/\/ path "bar" \/\/ segment \/? param "id" ==> h
+--     , path "foo" \/\/ path "bar" \/\/ segment \/\/ param "id" ==> h
 --     ]
 --
 --   where
@@ -161,13 +172,14 @@ toWAI ctxt f req cont =
 
 route :: RequestContext ctxt => ctxt -> [Route ctxt] -> IO (Maybe Response)
 route ctxt pths =
-  runReaderT (Fn.route (fmap liftRoute pths)) ctxt
+  runReaderT (unFnCtxt (Fn.route (fmap liftRoute pths))) ctxt
 
 
-liftRoute ::
-  RequestContext ctxt => Route ctxt -> Fn.Route (ReaderT ctxt IO)
+liftRoute :: RequestContext ctxt => Route ctxt -> Fn.Route (FnCtxt ctxt)
 liftRoute r =
-  \req -> ReaderT (\ctxt -> fmap (fmap (\s -> ReaderT (\_ -> s))) (r ctxt req))
+  \req ->
+    FnCtxt . ReaderT
+      $ \ctxt -> fmap (fmap (\s -> FnCtxt $ ReaderT (\_ -> s))) (r ctxt req)
 
 
 -- | The non-body parsing connective between route patterns and the
@@ -178,11 +190,11 @@ liftRoute r =
 
 (==>) ::
   RequestContext ctxt =>
-  (Req -> IO (Maybe (Req, k -> IO (Maybe a)))) ->
+  (Req -> IO (Maybe (Req, k -> a))) ->
   (ctxt -> k) ->
   ctxt ->
   Req ->
-  IO (Maybe (IO (Maybe a)))
+  IO (Maybe a)
 (match ==> handle) ctxt req =
   match req >>=
     \case
@@ -251,11 +263,11 @@ liftRoute r =
 
 staticServe :: RequestContext ctxt => Text -> ctxt -> IO (Maybe Response)
 staticServe d ctxt =
-  runReaderT (Fn.staticServe d) ctxt
+  runReaderT (unFnCtxt (Fn.staticServe d)) ctxt
 
 
 -- | Redirects to the referrer, if present in headers, else to "/".
 
 redirectReferer :: RequestContext ctxt => ctxt -> IO (Maybe Response)
 redirectReferer ctxt =
-  runReaderT Fn.redirectReferer ctxt
+  runReaderT (unFnCtxt Fn.redirectReferer) ctxt

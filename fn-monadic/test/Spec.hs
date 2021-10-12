@@ -107,15 +107,15 @@ main = hspec $ do
          vn (param "foo" (q [])) t1u
     it "should map invalid bytestring param values to Unicode replacement character" $
          v (param "foo" (q [("foo", Just "bar\xc3")])) (t1 "bar\65533")
-    it "should match combined param and paths with /?" $
-      do v ((path "a" /? param "id") (_p ["a"] $ q [("id", Just "x")])) (t1 "x")
-         vn ((path "a" /? param "id") (_p ["b"] $ q [("id", Just "x")])) t1u
-         vn ((path "a" /? param "id") (_p [] $ q [("id", Just "x")])) t1u
-         vn ((path "a" /? param "id") (_p ["a"] $ q [("di", Just "x")])) t1u
+    it "should match combined param and paths with //" $
+      do v ((path "a" // param "id") (_p ["a"] $ q [("id", Just "x")])) (t1 "x")
+         vn ((path "a" // param "id") (_p ["b"] $ q [("id", Just "x")])) t1u
+         vn ((path "a" // param "id") (_p [] $ q [("id", Just "x")])) t1u
+         vn ((path "a" // param "id") (_p ["a"] $ q [("di", Just "x")])) t1u
     it "should match combining param, path, segment" $
-      do v ((path "a" // segment /? param "id")
+      do v ((path "a" // segment // param "id")
              (_p ["a", "b"] $ q [("id", Just "x")])) (t2 "b" "x")
-         vn ((path "a" // segment // segment /? param "id")
+         vn ((path "a" // segment // segment // param "id")
                (_p ["a", "b"] $ q [("id", Just "x")])) t3u
     it "should apply matchers with ==>" $
       do (path "a" ==> const ()) rr (p ["a"])
