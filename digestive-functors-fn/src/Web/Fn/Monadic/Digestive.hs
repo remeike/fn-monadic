@@ -8,8 +8,8 @@ module Web.Fn.Monadic.Digestive ( runForm ) where
 import           Control.Applicative            ( (<$>) )
 import           Control.Arrow                  ( second )
 import           Control.Concurrent.MVar        ( readMVar )
-import           Control.Monad.Trans            ( lift, liftIO )
-import           Control.Monad.Trans.Resource   ( MonadUnliftIO, ResourceT
+import           Control.Monad.Trans            ( liftIO )
+import           Control.Monad.Trans.Resource   ( ResourceT
                                                 , getInternalState
                                                 , runResourceT
                                                 )
@@ -32,7 +32,7 @@ import           Web.Fn.Monadic                 ( Fn(..), FnRequest
 --------------------------------------------------------------------------------
 
 
-queryFormEnv :: MonadUnliftIO m => [(ByteString, Maybe ByteString)] -> [File FilePath] -> Env m
+queryFormEnv :: [(ByteString, Maybe ByteString)] -> [File FilePath] -> Env IO
 queryFormEnv qs fs = \pth ->
   let qs' = map (TextInput . T.decodeUtf8 . fromMaybe "" . snd) $ filter (forSubForm pth) qs
       fs' = map (FileInput . fileContent . snd) $ filter (forSubForm pth) $ filter fileNameNotEmpty fs
@@ -41,7 +41,7 @@ queryFormEnv qs fs = \pth ->
         forSubForm pth = (==) (fromPath pth) . T.decodeUtf8 . fst
 
 
-requestFormEnv :: MonadUnliftIO m => FnRequest -> ResourceT m (Env m)
+requestFormEnv :: FnRequest -> ResourceT IO (Env IO)
 requestFormEnv req = do
   st <- getInternalState
   v <- case snd req of
@@ -61,17 +61,13 @@ requestFormEnv req = do
 -- will be 'Nothing' and you should render the form (with the errors
 -- from the 'View').
 
-
-runForm ::
-  (Fn m, MonadUnliftIO m) =>
-  Text -> Form v m a -> ((View v, Maybe a) -> m a1) -> m a1
+runForm :: Fn m => Text -> Form v m a -> ((View v, Maybe a) -> m a1) -> m a1
 runForm nm frm k = do
   fnReq <- getRequest
-  runResourceT $ do
-    if requestMethod (fst fnReq) == methodPost then do
-      env <- requestFormEnv fnReq
-      req <- lift $ postForm nm frm (const (return env))
-      lift $ k req
-    else do
-      req <- (,Nothing) <$> lift (getForm nm frm)
-      lift $ k req
+  if requestMethod (fst fnReq) == methodPost then do
+    env <- liftIO $ runResourceT (requestFormEnv fnReq)
+    req <- postForm nm frm (const (return (fmap liftIO env)))
+    k req
+  else do
+    req <- (,Nothing) <$> getForm nm frm
+    k req
