@@ -127,7 +127,7 @@ import           System.Directory                    ( doesFileExist
                                                      )
 import           System.FilePath                     ( takeExtension )
 --------------------------------------------------------------------------------
-import Debug.Trace
+
 
 
 type PostMVar =
@@ -942,7 +942,7 @@ findParamMatches name params =
   fromParam
     $ map (maybe "" (Text.decodeUtf8With (\_ _ -> Just '\65533')) . snd)
     $ filter ((== Text.encodeUtf8 name) . fst)
-    $ traceShowId params
+    $ params
 
 
 getMVarParams :: PostMVar -> IO [Param]
