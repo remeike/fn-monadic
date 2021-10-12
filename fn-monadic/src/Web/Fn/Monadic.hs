@@ -75,6 +75,7 @@ module Web.Fn.Monadic
   , streamFile
   -- * Helpers
   , tempFileBackEnd'
+  , readBody
   ) where
 
 --------------------------------------------------------------------------------
@@ -126,7 +127,7 @@ import           System.Directory                    ( doesFileExist
                                                      )
 import           System.FilePath                     ( takeExtension )
 --------------------------------------------------------------------------------
-
+import Debug.Trace
 
 
 type PostMVar =
@@ -249,7 +250,7 @@ route pths =
 -- — this is what 'fallthrough' allows you to specify. In particular,
 -- 'notFoundText' and 'notFoundHtml' may be useful.
 
-fallthrough :: Fn m => m (Maybe Response) -> m Response -> m Response
+fallthrough :: Monad m => m (Maybe Response) -> m Response -> m Response
 fallthrough a ft = do
   a >>= maybe ft return
 
@@ -310,7 +311,7 @@ fallthrough a ft = do
 -- testing.
 
 (//) ::
-  Fn m =>
+  Monad m =>
   (r -> m (Maybe (r, k -> k'))) ->
   (r -> m (Maybe (r, k' -> a))) ->
   r -> m (Maybe (r, k -> a))
@@ -328,7 +329,7 @@ fallthrough a ft = do
 -- | Matches a literal part of the path. If there is no path part
 -- left, or the next part does not match, the whole match fails.
 
-path :: Fn m => Text -> Req -> m (Maybe (Req, a -> a))
+path :: Monad m => Text -> Req -> m (Maybe (Req, a -> a))
 path s req =
   return $
     case req of
@@ -339,7 +340,7 @@ path s req =
 -- | Matches there being no parts of the path left. This is useful when
 -- matching index routes.
 
-end :: Fn m => Req -> m (Maybe (Req, a -> a))
+end :: Monad m => Req -> m (Maybe (Req, a -> a))
 end req =
   return $
     case req of
@@ -349,7 +350,7 @@ end req =
 
 -- | Matches anything.
 
-anything :: Fn m => Req -> m (Maybe (Req, a -> a))
+anything :: Monad m => Req -> m (Maybe (Req, a -> a))
 anything req =
   return $ Just (req, id)
 
@@ -358,7 +359,7 @@ anything req =
 -- specified by the handler it is matched to. If there is no segment, or
 -- if the segment cannot be parsed as such, it won't match.
 
-segment :: (Fn m, FromParam p) => Req -> m (Maybe (Req, (p -> a) -> a))
+segment :: (Monad m, FromParam p) => Req -> m (Maybe (Req, (p -> a) -> a))
 segment req =
   return $
     case req of
@@ -374,7 +375,7 @@ segment req =
 
 -- | Matches on a particular HTTP method.
 
-method :: Fn m => StdMethod -> Req -> m (Maybe (Req, a -> a))
+method :: Monad m => StdMethod -> Req -> m (Maybe (Req, a -> a))
 method m r@(_,_,_,m',_) | m == m' = return $ Just (r, id)
 method _ _                        = return Nothing
 
@@ -460,7 +461,7 @@ instance FromParam a => FromParam (Maybe a) where
 -- match query parameters.
 
 param ::
-  (Fn m, FromParam p) => Text -> Req -> m (Maybe (Req, (p -> a) -> a))
+  (MonadIO m, FromParam p) => Text -> Req -> m (Maybe (Req, (p -> a) -> a))
 param n req@(_,_,q,_,mv) = do
   ps <- liftIO (getMVarParams mv)
   return $
@@ -473,7 +474,7 @@ param n req@(_,_,q,_,mv) = do
 -- is not present or cannot be parsed into the type expected by the handler.
 
 paramDef ::
-  (Fn m, FromParam p) => Text -> p -> Req -> m (Maybe (Req, (p -> a) -> a))
+  (MonadIO m, FromParam p) => Text -> p -> Req -> m (Maybe (Req, (p -> a) -> a))
 paramDef n def req =
   param n req >>=
     \case
@@ -492,7 +493,7 @@ paramDef n def req =
 -- match query parameters.
 
 paramOpt ::
-  (Fn m, FromParam p) =>
+  (MonadIO m, FromParam p) =>
   Text -> Req -> m (Maybe (Req, (Either ParamError p -> a) -> a))
 paramOpt n req@(_,_,q,_,mv) = do
   ps <- liftIO (getMVarParams mv)
@@ -510,7 +511,7 @@ data File =
 
 -- | Matches an uploaded file with the given parameter name.
 
-file :: Fn m => Text -> Req -> m (Maybe (Req, (File -> a) -> a))
+file :: MonadIO m => Text -> Req -> m (Maybe (Req, (File -> a) -> a))
 file n req@(r,_,_,_,mv) = do
   fs <- liftIO (getMVarFiles mv r)
   return $
@@ -522,7 +523,7 @@ file n req@(r,_,_,_,mv) = do
 -- | Matches all uploaded files, passing their parameter names and
 -- contents.
 
-files :: Fn m => Req -> m (Maybe (Req, ([(Text, File)] -> a) -> a))
+files :: MonadIO m => Req -> m (Maybe (Req, ([(Text, File)] -> a) -> a))
 files req@(r,_,_,_,mv) = do
   fs <- liftIO (getMVarFiles mv r)
   return $ Just (req, \k -> k fs)
@@ -562,7 +563,7 @@ staticServe directory = do
 --
 -- If no file exists at the given path, it will keep routing.
 
-sendFile :: Fn m => FilePath -> m (Maybe Response)
+sendFile :: MonadIO m => FilePath -> m (Maybe Response)
 sendFile pth = do
   exists <- liftIO (doesFileExist pth)
   if exists then
@@ -581,7 +582,7 @@ sendFile pth = do
 -- | Returns 'Text' as a plain text response (@text/plain@)
 -- with 200 status code.
 
-okText :: Fn m => Text -> m (Maybe Response)
+okText :: Monad m => Text -> m (Maybe Response)
 okText =
   text200 plainText
 
@@ -590,7 +591,7 @@ okText =
 -- | Returns 'Text' as a JSON response (@application/json@)
 -- with 200 status code.
 
-okJson :: Fn m => Text -> m (Maybe Response)
+okJson :: Monad m => Text -> m (Maybe Response)
 okJson =
   text Http.status200 applicationJson
 
@@ -598,7 +599,7 @@ okJson =
 -- | Returns Html (in 'Text') as a response (@text/html@)
 -- with 200 status code.
 
-okHtml :: Fn m => Text -> m (Maybe Response)
+okHtml :: Monad m => Text -> m (Maybe Response)
 okHtml =
   html200
 
@@ -606,7 +607,7 @@ okHtml =
 -- | Returns 'Text' as a plain text response (@text/plain@)
 -- with a 500 status code.
 
-errText :: Fn m => Text -> m (Maybe Response)
+errText :: Monad m => Text -> m (Maybe Response)
 errText =
   text500 plainText
 
@@ -614,7 +615,7 @@ errText =
 -- | Returns Html (in 'Text') as a response (@text/html@)
 -- with 500 status code.
 
-errHtml :: Fn m => Text -> m (Maybe Response)
+errHtml :: Monad m => Text -> m (Maybe Response)
 errHtml =
   html500
 
@@ -623,7 +624,7 @@ errHtml =
 -- returns a @m Response@ not an @m (Maybe Response)@ because the
 -- expectation is that you are calling this with 'fallthrough'.
 
-notFoundText :: Fn m => Text -> m Response
+notFoundText :: Monad m => Text -> m Response
 notFoundText body =
   return
     $  responseBuilder Http.status404 [(Http.hContentType, plainText)]
@@ -634,18 +635,17 @@ notFoundText body =
 -- returns a @m Response@ not an @m (Maybe Response)@ because the
 -- expectation is that you are calling this with 'fallthrough'.
 
-notFoundHtml :: Fn m => Text -> m Response
+notFoundHtml :: Monad m => Text -> m Response
 notFoundHtml body =
   return
     $ responseBuilder Http.status404 [(Http.hContentType, htmlText)]
     $ Blaze.fromText body
 
 
-
 -- | Redirects to the given url with 303 status code (See Other).
 -- Note that the target is not validated, so it should be an absolute path/url.
 
-redirect :: Fn m => Text -> m (Maybe Response)
+redirect :: Monad m => Text -> m (Maybe Response)
 redirect =
   redirect303
 
@@ -667,7 +667,7 @@ redirectReferer = do
 -- | Returns a redirect response with the given status code and url.
 -- Note that the target is not validated, so it should be an absolute path/url.
 
-redirect3xx :: Fn m => Status -> Text -> m (Maybe Response)
+redirect3xx :: Monad m => Status -> Text -> m (Maybe Response)
 redirect3xx status target =
   return . Just
     $ responseBuilder status [(Http.hLocation, Text.encodeUtf8 target)]
@@ -677,7 +677,7 @@ redirect3xx status target =
 -- | Redirects to the given url with 301 status code (Moved Permanently).
 -- Note that the target is not validated, so it should be an absolute path/url.
 
-redirect301 :: Fn m => Text -> m (Maybe Response)
+redirect301 :: Monad m => Text -> m (Maybe Response)
 redirect301 target =
   redirect3xx Http.status301 target
 
@@ -685,7 +685,7 @@ redirect301 target =
 -- | Redirects to the given url with 302 status code (Found).
 -- Note that the target is not validated, so it should be an absolute path/url.
 
-redirect302 :: Fn m => Text -> m (Maybe Response)
+redirect302 :: Monad m => Text -> m (Maybe Response)
 redirect302 target =
   redirect3xx Http.status302 target
 
@@ -693,7 +693,7 @@ redirect302 target =
 -- | Redirects to the given url with 303 status code (See Other).
 -- Note that the target is not validated, so it should be an absolute path/url.
 
-redirect303 :: Fn m => Text -> m (Maybe Response)
+redirect303 :: Monad m => Text -> m (Maybe Response)
 redirect303 target =
   redirect3xx Http.status303 target
 
@@ -704,7 +704,7 @@ redirect303 target =
 
 -- | Returns a response with the given status code, mime type, and 'Text' body.
 
-text :: Fn m => Status -> ByteString -> Text -> m (Maybe Response)
+text :: Monad m => Status -> ByteString -> Text -> m (Maybe Response)
 text status content body =
   return $ Just $
     responseBuilder status [(Http.hContentType, content)] (Blaze.fromText body)
@@ -712,7 +712,7 @@ text status content body =
 
 -- | Returns a 200 (OK) response with the given mime type and 'Text' body.
 
-text200 :: Fn m => ByteString -> Text -> m (Maybe Response)
+text200 :: Monad m => ByteString -> Text -> m (Maybe Response)
 text200 content body =
   text Http.status200 content body
 
@@ -720,7 +720,7 @@ text200 content body =
 -- | Returns a 403 (Forbidden) response with the given mime type
 -- and 'Text' body.
 
-text403 :: Fn m => ByteString -> Text -> m (Maybe Response)
+text403 :: Monad m => ByteString -> Text -> m (Maybe Response)
 text403 content body =
   text Http.status403 content body
 
@@ -728,14 +728,14 @@ text403 content body =
 -- | Returns a 404 (Not Found) response with the given mime type
 -- and 'Text' body.
 
-text404 :: Fn m => ByteString -> Text -> m (Maybe Response)
+text404 :: Monad m => ByteString -> Text -> m (Maybe Response)
 text404 content body =
   text Http.status404 content body
 
 
 -- | Returns a 410 (Gone) response with the given mime type and 'Text' body.
 
-text410 :: Fn m => ByteString -> Text -> m (Maybe Response)
+text410 :: Monad m => ByteString -> Text -> m (Maybe Response)
 text410 content body =
   text Http.status410 content body
 
@@ -743,7 +743,7 @@ text410 content body =
 -- | Returns a 500 (Internal Server Error) response with the given mime type
 -- and 'Text' body.
 
-text500 :: Fn m => ByteString -> Text -> m (Maybe Response)
+text500 :: Monad m => ByteString -> Text -> m (Maybe Response)
 text500 content body =
   text Http.status500 content body
 
@@ -751,7 +751,7 @@ text500 content body =
 -- | Returns a 503 (Service Unavailable) response with the given mime type
 -- and 'Text' body.
 
-text503 :: Fn m => ByteString -> Text -> m (Maybe Response)
+text503 :: Monad m => ByteString -> Text -> m (Maybe Response)
 text503 content body =
   text Http.status503 content body
 
@@ -763,7 +763,7 @@ text503 content body =
 -- | Returns a @text/html@ response with the given 'Status' code
 -- and a response body with the given 'Text' as HTML.
 
-html :: Fn m => Status -> Text -> m (Maybe Response)
+html :: Monad m => Status -> Text -> m (Maybe Response)
 html status body =
   text status htmlText body
 
@@ -771,7 +771,7 @@ html status body =
 -- | Returns a response with a 200 (OK) status code
 -- and a response body with the given 'Text' as HTML.
 
-html200 :: Fn m => Text -> m (Maybe Response)
+html200 :: Monad m => Text -> m (Maybe Response)
 html200 =
   html Http.status200
 
@@ -779,7 +779,7 @@ html200 =
 -- | Returns a response with a 403 (Forbidden) status code
 -- and a response body with the given 'Text' as HTML.
 
-html403 :: Fn m => Text -> m (Maybe Response)
+html403 :: Monad m => Text -> m (Maybe Response)
 html403 =
   html Http.status403
 
@@ -787,7 +787,7 @@ html403 =
 -- | Returns a response with a 404 (Not Found) status code
 -- and a response body with the given 'Text' as HTML.
 
-html404 :: Fn m => Text -> m (Maybe Response)
+html404 :: Monad m => Text -> m (Maybe Response)
 html404 =
   html Http.status404
 
@@ -795,7 +795,7 @@ html404 =
 -- | Returns a response with a 410 (Gone) status code
 -- and a response body with the given 'Text' as HTML.
 
-html410 :: Fn m => Text -> m (Maybe Response)
+html410 :: Monad m => Text -> m (Maybe Response)
 html410 =
   html Http.status410
 
@@ -803,7 +803,7 @@ html410 =
 -- | Returns a response with a 500 (Internal Server Error) status code
 -- and a response body with the given 'Text' as HTML.
 
-html500 :: Fn m => Text -> m (Maybe Response)
+html500 :: Monad m => Text -> m (Maybe Response)
 html500 =
   html Http.status500
 
@@ -811,7 +811,7 @@ html500 =
 -- | Returns a response with a 503 (Service Unavailable) status code
 -- and a response body with the given 'Text' as HTML.
 
-html503 :: Fn m => Text -> m (Maybe Response)
+html503 :: Monad m => Text -> m (Maybe Response)
 html503 =
   html Http.status503
 
@@ -823,7 +823,7 @@ html503 =
 -- | Returns a @application/json@ response with the given 'Status' code
 -- and a response body with the JSON encoding of the given value 'a'.
 
-json :: (Fn m, ToJSON a) => Status -> a -> m (Maybe Response)
+json :: (Monad m, ToJSON a) => Status -> a -> m (Maybe Response)
 json status val =
   return
     $ Just
@@ -835,7 +835,7 @@ json status val =
 -- | Returns a response with a 200 (OK) status code
 -- and a response body with the JSON encoding of the given value 'a'.
 
-json200 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
+json200 :: (Monad m, ToJSON a) => a -> m (Maybe Response)
 json200 =
   json Http.status200
 
@@ -843,7 +843,7 @@ json200 =
 -- | Returns a response with a 403 (Forbidden) status code
 -- and a response body with the JSON encoding of the given value 'a'.
 
-json403 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
+json403 :: (Monad m, ToJSON a) => a -> m (Maybe Response)
 json403 =
   json Http.status403
 
@@ -851,7 +851,7 @@ json403 =
 -- | Returns a response with a 404 (Not Found) status code
 -- and a response body with the JSON encoding of the given value 'a'.
 
-json404 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
+json404 :: (Monad m, ToJSON a) => a -> m (Maybe Response)
 json404 =
   json Http.status404
 
@@ -859,7 +859,7 @@ json404 =
 -- | Returns a response with a 410 (Gone) status code
 -- and a response body with the JSON encoding of the given value 'a'.
 
-json410 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
+json410 :: (Monad m, ToJSON a) => a -> m (Maybe Response)
 json410 =
   json Http.status410
 
@@ -867,7 +867,7 @@ json410 =
 -- | Returns a response with a 500 (Internal Service Error) status code
 -- and a response body with the JSON encoding of the given value 'a'.
 
-json500 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
+json500 :: (Monad m, ToJSON a) => a -> m (Maybe Response)
 json500 =
   json Http.status500
 
@@ -875,7 +875,7 @@ json500 =
 -- | Returns a response with a 503 (Service Unavailable) status code
 -- and a response body with the JSON encoding of the given value 'a'.
 
-json503 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
+json503 :: (Monad m, ToJSON a) => a -> m (Maybe Response)
 json503 =
   json Http.status503
 
@@ -887,14 +887,14 @@ json503 =
 -- | Returns a streaming response with the given 'ResponseHeaders'
 -- and 'StreamingBody'.
 
-stream :: Fn m => ResponseHeaders -> StreamingBody -> m (Maybe Response)
+stream :: Monad m => ResponseHeaders -> StreamingBody -> m (Maybe Response)
 stream headers body =
   return . Just $ responseStream Http.status200 headers body
 
 
 -- | Returns a streaming response with the given file name and 'StreamingBody'.
 
-streamFile :: Fn m => ByteString -> StreamingBody -> m (Maybe Response)
+streamFile :: Monad m => ByteString -> StreamingBody -> m (Maybe Response)
 streamFile filename body =
   stream
     [ ( "Content-Disposition"
@@ -940,9 +940,9 @@ findParamMatches ::
   Text -> [(ByteString, Maybe ByteString)] -> Either ParamError p
 findParamMatches name params =
   fromParam
-    $ map (maybe "" Text.decodeUtf8 . snd)
+    $ map (maybe "" (Text.decodeUtf8With (\_ _ -> Just '\65533')) . snd)
     $ filter ((== Text.encodeUtf8 name) . fst)
-    $ params
+    $ traceShowId params
 
 
 getMVarParams :: PostMVar -> IO [Param]

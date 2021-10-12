@@ -10,6 +10,7 @@ category:       Web
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
+cabal-version:  >= 1.8
 
 source-repository head
   type:     git
@@ -18,6 +19,7 @@ source-repository head
 library
   hs-source-dirs:      src
   exposed-modules:     Web.Fn.Monadic
+                     , Web.Fn
   build-depends:       base >= 4.7 && < 6
                      , aeson
                      , blaze-builder
@@ -28,6 +30,7 @@ library
                      , mime-types
                      , resourcet
                      , text
+                     , transformers
                      , wai >= 3
                      , wai-extra >= 3
   default-language:    Haskell2010
@@ -38,5 +41,15 @@ test-suite fn-monadic-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   build-depends:       base
+                     , fn-monadic
+                     , hspec
+                     , text
+                     , http-types
+                     , wai
+                     , wai-extra
+                     , unordered-containers
+                     , filepath
+                     , directory
+                     , resourcet
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
   default-language:    Haskell2010
