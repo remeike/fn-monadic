@@ -46,6 +46,7 @@ module Web.Fn
   , Fn.FromParam(..)
   , Fn.ParamError(..)
   , Fn.param
+  , Fn.paramDef
   , Fn.paramMany
   , Fn.paramOpt
   , Fn.File(..)
@@ -63,7 +64,39 @@ module Web.Fn
   , Fn.notFoundHtml
   , Fn.redirect
   , redirectReferer
-    -- * Helpers
+  -- * Redirect Responses
+  , Fn.redirect3xx
+  , Fn.redirect301
+  , Fn.redirect302
+  , Fn.redirect303
+  -- * Text Responses
+  , Fn.text
+  , Fn.text200
+  , Fn.text403
+  , Fn.text404
+  , Fn.text410
+  , Fn.text500
+  , Fn.text503
+  -- * HTML Responses
+  , Fn.html
+  , Fn.html200
+  , Fn.html403
+  , Fn.html404
+  , Fn.html410
+  , Fn.html500
+  , Fn.html503
+  -- * JSON Responses
+  , Fn.json
+  , Fn.json200
+  , Fn.json403
+  , Fn.json404
+  , Fn.json410
+  , Fn.json500
+  , Fn.json503
+  -- * Sreaming Responses
+  , Fn.stream
+  , Fn.streamFile
+  -- * Helpers
   , Fn.tempFileBackEnd'
   ) where
 
@@ -116,6 +149,7 @@ instance RequestContext FnRequest where
 
 
 -- | The type of a route, constructed with 'pattern ==> handler'.
+
 type Route ctxt = ctxt -> Req -> IO (Maybe (IO (Maybe Response)))
 
 
@@ -154,20 +188,20 @@ toWAI ctxt f req cont =
 -- the double 'Maybe'). It can be nested.
 --
 -- @
--- app ctxt =
---   route ctxt
---     [ end ==> index
---     , path "foo" \/\/ path "bar" \/\/ segment \/\/ param "id" ==> h
---     ]
+--  app ctxt =
+--    route ctxt
+--      [ end ==> index
+--      , path "foo" \/\/ path "bar" \/\/ segment \/\/ param "id" ==> h
+--      ]
 --
---   where
---     index :: Ctxt -> Fn m => m (Maybe Response)
---     index _ =
---       okText "This is the index."
+--    where
+--      index :: Ctxt -> Fn m => m (Maybe Response)
+--      index _ =
+--        okText "This is the index."
 --
---     h :: Fn m => Ctxt -> Text -> Text -> m (Maybe Response)
---     h _ s i =
---       okText ("got path \/foo\/" <> s <> ", with id=" <> i)
+--      h :: Fn m => Ctxt -> Text -> Text -> m (Maybe Response)
+--      h _ s i =
+--        okText ("got path \/foo\/" <> s <> ", with id=" <> i)
 -- @
 
 route :: RequestContext ctxt => ctxt -> [Route ctxt] -> IO (Maybe Response)
