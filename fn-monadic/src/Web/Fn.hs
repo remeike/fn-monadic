@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE OverloadedStrings          #-}
+
 
 {-|
 
@@ -26,6 +26,7 @@ parameters.
 module Web.Fn
   ( -- * Application setup
     FnRequest
+  , FnResponse
   , Fn.defaultFnRequest
   , RequestContext(..)
   , toWAI
@@ -62,114 +63,41 @@ module Web.Fn
   , Fn.errHtml
   , Fn.notFoundText
   , Fn.notFoundHtml
+  , Fn.notFoundJson
   , Fn.redirect
   , redirectReferer
-  -- * Redirect Responses
-  , Fn.redirect3xx
-  , Fn.redirect301
-  , Fn.redirect302
-  , Fn.redirect303
-  -- * Text Responses
-  , Fn.text
-  , Fn.text200
-  , Fn.text403
-  , Fn.text404
-  , Fn.text410
-  , Fn.text500
-  , Fn.text503
-  -- * HTML Responses
-  , Fn.html
-  , Fn.html200
-  , Fn.html403
-  , Fn.html404
-  , Fn.html410
-  , Fn.html500
-  , Fn.html503
-  -- * JSON Responses
-  , Fn.json
-  , Fn.json200
-  , Fn.json403
-  , Fn.json404
-  , Fn.json410
-  , Fn.json500
-  , Fn.json503
-  -- * Sreaming Responses
-  , Fn.stream
-  , Fn.streamFile
+  , Fn.skip
+    -- * Utility Functions for Requests
+  , waiRequest
+  , getRequestHeaders
+  , lookupRequestHeader
+  , getParams
+  , lookupParam
+  , decodeJsonBody
   -- * Helpers
-  , Fn.tempFileBackEnd'
+  , tempFileBackEnd'
   ) where
 
 --------------------------------------------------------------------------------
-import           Control.Monad.IO.Class     ( MonadIO )
-import           Control.Monad.Reader       ( MonadReader, ReaderT(..)
-                                            , ask, local
-                                            )
-import           Data.Text                  ( Text )
-import           Network.Wai                ( Application, Request(..), Response )
-import           Web.Fn.Monadic             ( Fn, FnRequest, Req )
-import qualified Web.Fn.Monadic            as Fn
+import           Data.Aeson               ( FromJSON )
+import           Control.Monad.Reader     ( ReaderT(..) )
+import           Data.Text                ( Text )
+import           Network.HTTP.Types       ( RequestHeaders )
+import           Network.Wai              ( Application, Request(..), Response )
+import           Network.Wai.Parse        ( Param )
+import           Web.Fn.Monadic           ( FnRequest, FnResponse, Req )
+import qualified Web.Fn.Monadic          as Fn
 --------------------------------------------------------------------------------
-
-
-data Store b a = Store b (b -> a)
-
-
-instance Functor (Store b) where
-  fmap f (Store b h) = Store b (f . h)
-
-
--- | Specify the way that Fn can get the 'FnRequest' out of your context.
---
--- The easiest way to instantiate this is to use the lens, but if you
--- don't want to use lenses, define 'getRequest' and 'setRequest'.
---
--- Note that 'requestLens' is defined in terms of 'getRequest' and
--- 'setRequest' and vice-versa, so you need to define _one_ of these.
-
-class RequestContext ctxt where
-  requestLens :: Functor f => (FnRequest -> f FnRequest) -> ctxt -> f ctxt
-  requestLens f c =
-    setRequest c <$> f (getRequest c)
-
-  getRequest :: ctxt -> FnRequest
-  getRequest c =
-    let (Store r _) = requestLens (`Store` id) c
-    in r
-
-  setRequest :: ctxt -> FnRequest -> ctxt
-  setRequest c r =
-    let (Store _ b) = requestLens (`Store` id) c
-    in b r
-
-
-instance RequestContext FnRequest where
-  getRequest   = id
-  setRequest _ = id
+import           Web.Fn.Internal          ( RequestContext(..)
+                                          , readBody
+                                          , tempFileBackEnd'
+                                          )
+--------------------------------------------------------------------------------
 
 
 -- | The type of a route, constructed with 'pattern ==> handler'.
 
-type Route ctxt = ctxt -> Req -> IO (Maybe (IO (Maybe Response)))
-
-
--- | Specify the way that Fn can get the 'FnRequest' out of your context.
---
--- The easiest way to instantiate this is to use the lens, but if you
--- don't want to use lenses, define 'getRequest' and 'setRequest'.
---
--- Note that 'requestLens' is defined in terms of 'getRequest' and
--- 'setRequest' and vice-versa, so you need to define _one_ of these.
-
-
-newtype FnCtxt ctxt a =
-  FnCtxt { unFnCtxt :: ReaderT ctxt IO a }
-  deriving ( Functor, Applicative, Monad, MonadIO, MonadReader ctxt )
-
-
-instance RequestContext ctxt => Fn (FnCtxt ctxt) where
-  getRequest = fmap getRequest ask
-  setRequest req = local (\ctxt -> setRequest ctxt req)
+type Route ctxt = ctxt -> Req -> IO (Maybe (IO FnResponse))
 
 
 -- | Convert an Fn application (provide a context, a context to response
@@ -178,8 +106,7 @@ instance RequestContext ctxt => Fn (FnCtxt ctxt) where
 
 toWAI :: RequestContext ctxt => ctxt -> (ctxt -> IO Response) -> Application
 toWAI ctxt f req cont =
-  Fn.toWai
-    (\app -> (runReaderT (unFnCtxt app)) ctxt) (FnCtxt (ReaderT f)) req cont
+  Fn.toWai (\app -> runReaderT app ctxt) (ReaderT f) req cont
 
 
 -- | The main construct for Fn, 'route' takes a context (which it will pass
@@ -195,25 +122,23 @@ toWAI ctxt f req cont =
 --      ]
 --
 --    where
---      index :: Ctxt -> Fn m => m (Maybe Response)
+--      index :: Ctxt -> Fn m => m FnResponse
 --      index _ =
 --        okText "This is the index."
 --
---      h :: Fn m => Ctxt -> Text -> Text -> m (Maybe Response)
+--      h :: Fn m => Ctxt -> Text -> Text -> m FnResponse
 --      h _ s i =
 --        okText ("got path \/foo\/" <> s <> ", with id=" <> i)
 -- @
 
-route :: RequestContext ctxt => ctxt -> [Route ctxt] -> IO (Maybe Response)
+route :: RequestContext ctxt => ctxt -> [Route ctxt] -> IO FnResponse
 route ctxt pths =
-  runReaderT (unFnCtxt (Fn.route (fmap liftRoute pths))) ctxt
+  runReaderT (Fn.route (fmap liftRoute pths)) ctxt
 
 
-liftRoute :: RequestContext ctxt => Route ctxt -> Fn.Route (FnCtxt ctxt)
+liftRoute :: RequestContext ctxt => Route ctxt -> Fn.Route (ReaderT ctxt IO)
 liftRoute r =
-  \req ->
-    FnCtxt . ReaderT
-      $ \ctxt -> fmap (fmap (\s -> FnCtxt $ ReaderT (\_ -> s))) (r ctxt req)
+  \req -> ReaderT $ \ctxt -> fmap (fmap (\s -> ReaderT (\_ -> s))) (r ctxt req)
 
 
 -- | The non-body parsing connective between route patterns and the
@@ -244,8 +169,8 @@ liftRoute r =
 
 
 -- | The connective between route patterns and the handler that parses
--- the body, which allows post params to be extracted with 'param' and
--- allows 'file' to work (otherwise, it will trigger a runtime error).
+-- the body, which allows post params to be extracted with 'Fn.param' and
+-- allows 'Fn.file' to work (otherwise, it will trigger a runtime error).
 
 (!=>) ::
   RequestContext ctxt =>
@@ -258,7 +183,7 @@ liftRoute r =
   let
     (request, Just mv) = getRequest ctxt
   in
-  Fn.readBody mv request >> match req >>=
+  readBody mv request >> match req >>=
     \case
       Nothing ->
         return Nothing
@@ -269,8 +194,8 @@ liftRoute r =
 
 
 
-{-# DEPRECATED (/?) "Use the identical '//' instead." #-}
--- | A synonym for '//'. To be removed
+{-# DEPRECATED (/?) "Use the identical 'Fn.//' instead." #-}
+-- | A synonym for 'Fn.//'. To be removed
 
 (/?) ::
   (r -> IO (Maybe (r, k -> k'))) ->
@@ -295,13 +220,66 @@ liftRoute r =
 -- If no file is found, or if the path has @..@ or starts with @/@,
 -- this will continue routing.
 
-staticServe :: RequestContext ctxt => Text -> ctxt -> IO (Maybe Response)
+staticServe :: RequestContext ctxt => Text -> ctxt -> IO FnResponse
 staticServe d ctxt =
-  runReaderT (unFnCtxt (Fn.staticServe d)) ctxt
+  runReaderT (Fn.staticServe d) ctxt
 
 
 -- | Redirects to the referrer, if present in headers, else to "/".
 
-redirectReferer :: RequestContext ctxt => ctxt -> IO (Maybe Response)
+redirectReferer :: RequestContext ctxt => ctxt -> IO FnResponse
 redirectReferer ctxt =
-  runReaderT (unFnCtxt Fn.redirectReferer) ctxt
+  runReaderT Fn.redirectReferer ctxt
+
+
+
+--------------------------------------------------------------------------------
+-- Utility Functions for Requests
+
+
+-- | Returns the WAI 'Request' directly.
+
+waiRequest :: RequestContext ctxt => ctxt -> IO Request
+waiRequest ctxt =
+  runReaderT Fn.waiRequest ctxt
+
+
+-- | Returns the WAI 'RequestHeaders' directly.
+
+getRequestHeaders :: RequestContext ctxt => ctxt -> IO RequestHeaders
+getRequestHeaders ctxt =
+  runReaderT Fn.getRequestHeaders ctxt
+
+
+-- | Returns the value for the given request header key, if it exists.
+
+lookupRequestHeader :: RequestContext ctxt => ctxt -> Text -> IO (Maybe Text)
+lookupRequestHeader ctxt name =
+  runReaderT (Fn.lookupRequestHeader name) ctxt
+
+
+-- | Returns all of the query params in an 'FnRequest'
+
+getParams :: RequestContext ctxt => ctxt -> IO [Param]
+getParams ctxt =
+  runReaderT Fn.getParams ctxt
+
+
+-- | Returns the value for the given query parameter, parsed into the expected
+-- type.
+
+lookupParam ::
+  (RequestContext ctxt, Fn.FromParam p) => ctxt -> Text -> IO (Maybe p)
+lookupParam ctxt name =
+  runReaderT (Fn.lookupParam name) ctxt
+
+
+-- | Decode the JSON request body into the expected value.
+
+-- Note: Since this function consumes the request body,
+-- future calls to it will return the empty string.
+
+decodeJsonBody ::
+  (RequestContext ctxt, FromJSON a) => ctxt -> IO (Either Text a)
+decodeJsonBody ctxt =
+  runReaderT Fn.decodeJsonBody ctxt

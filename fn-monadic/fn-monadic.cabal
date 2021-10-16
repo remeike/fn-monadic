@@ -10,7 +10,7 @@ category:       Web
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
-cabal-version:  >= 1.8
+cabal-version:  >= 1.10
 
 source-repository head
   type:     git
@@ -18,12 +18,15 @@ source-repository head
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Web.Fn.Monadic
-                     , Web.Fn
+  exposed-modules:     Web.Fn
+                     , Web.Fn.Monadic
+                     , Web.Fn.Response
+  other-modules:       Web.Fn.Internal
   build-depends:       base >= 4.7 && < 6
                      , aeson
                      , blaze-builder
                      , bytestring
+                     , case-insensitive
                      , directory
                      , filepath
                      , http-types
