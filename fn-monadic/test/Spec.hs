@@ -61,6 +61,8 @@ t1 :: Text -> Text -> Bool
 t1 = (==)
 t2 :: Text -> Text -> Text -> Text -> Bool
 t2 a b a' b' = a == a' && b == b'
+t2b :: Text -> Bool -> Text -> Bool -> Bool
+t2b a b a' b' = a == a' && b == b'
 t3 :: Text -> Text -> Text -> Text -> Text -> Text -> Bool
 t3 a b c a' b' c' = a == a' && b == b' && c == c'
 
@@ -117,6 +119,16 @@ main = hspec $ do
              (_p ["a", "b"] $ q [("id", Just "x")])) (t2 "b" "x")
          vn ((path "a" // segment // segment // param "id")
                (_p ["a", "b"] $ q [("id", Just "x")])) t3u
+    it "should match param whether present or not and handle bool value" $ do
+      v ((path "a" // segment // paramBool "min")
+             (_p ["a", "b"] $ q [("min", Nothing)])) (t2b "b" True)
+      v ((path "a" // segment // paramBool "min")
+             (_p ["a", "b"] $ q [])) (t2b "b" False)
+    it "should match param taking default value if param is not present" $ do
+      v ((path "a" // segment // paramDef "id" "0")
+             (_p ["a", "b"] $ q [("id", Just "1")])) (t2 "b" "1")
+      v ((path "a" // segment // paramDef "id" "0")
+             (_p ["a", "b"] $ q [])) (t2 "b" "0")
     it "should apply matchers with ==>" $
       do (path "a" ==> const ()) rr (p ["a"])
            `shouldSatisfyIO` isJust

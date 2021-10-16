@@ -47,6 +47,7 @@ module Web.Fn
   , Fn.FromParam(..)
   , Fn.ParamError(..)
   , Fn.param
+  , Fn.paramBool
   , Fn.paramDef
   , Fn.paramMany
   , Fn.paramOpt

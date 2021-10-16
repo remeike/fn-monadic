@@ -33,6 +33,7 @@ module Web.Fn.Monadic
   , FromParam(..)
   , ParamError(..)
   , param
+  , paramBool
   , paramMany
   , paramDef
   , paramOpt
@@ -433,6 +434,17 @@ param n req@(_,_,q,_,mv) = do
     case findParamMatches n (q ++ map (second Just) ps) of
       Right y -> Just (req, \k -> k y)
       Left _  -> Nothing
+
+
+-- | TK
+
+paramBool :: MonadIO m => Text -> Req -> m (Maybe (Req, (Bool -> a) -> a))
+paramBool n req@(_,_,q,_,mv) = do
+  ps <- liftIO (Internal.getMVarParams mv)
+  return $
+    case lookup (Text.encodeUtf8 n) (q ++ map (second Just) ps) of
+      Just _  -> Just (req, \k -> k True)
+      Nothing -> Just (req, \k -> k False)
 
 
 {-# DEPRECATED paramMany "Use 'param' with a list type, or define param parsing for non-empty list." #-}
