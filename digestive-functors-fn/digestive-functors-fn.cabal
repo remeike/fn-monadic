@@ -10,6 +10,7 @@ category:       Web
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
+cabal-version:  >= 1.8
 
 source-repository head
   type:     git
@@ -17,7 +18,9 @@ source-repository head
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Web.Fn.Monadic.Digestive
+  exposed-modules:     Web.Fn.Digestive
+                     , Web.Fn.Digestive.Monadic
+  other-modules:       Web.Fn.Digestive.Internal
   build-depends:       base >= 4.7 && < 6
                      , bytestring
                      , digestive-functors

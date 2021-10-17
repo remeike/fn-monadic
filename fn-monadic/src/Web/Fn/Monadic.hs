@@ -1,12 +1,34 @@
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE OverloadedStrings    #-}
+
+
+{-|
+
+This package provides a simple framework for routing and responses.
+It exposes two different interfaces: an IO-based interface that can be
+found in Web.Fn and the more generic, monad-based interface found
+in this module.
+
+The two primary goals of the monadic interface are:
+
+1. All web handler functions work with instances of the Fn typeclass.
+This makes the library easily compatible with many different types of
+application architectures.
+
+2. Web handlers are functions with typed parameters. When routing, we
+specify many parameters (most commonly, numeric ids, but can be many
+things), so the handlers should be functions that take those as
+parameters.
+-}
 
 
 module Web.Fn.Monadic
   ( -- * Application Setup
     FnRequest
+  , FnResponse
   , Fn(..)
-  , defaultFnRequest
+  , Internal.defaultFnRequest
   , toWai
     -- * Routing
   , Req
@@ -21,15 +43,17 @@ module Web.Fn.Monadic
   , anything
   , segment
   , method
-  , Fn.FromParam(..)
-  , Fn.ParamError(..)
+  , FromParam(..)
+  , ParamError(..)
   , param
+  , paramBool
+  , paramMany
   , paramDef
   , paramOpt
-  , Fn.File(..)
+  , File(..)
   , file
   , files
-  -- * Basic Responses
+    -- * Basic Responses
   , staticServe
   , sendFile
   , okText
@@ -39,83 +63,62 @@ module Web.Fn.Monadic
   , errHtml
   , notFoundText
   , notFoundHtml
+  , notFoundJson
   , redirect
   , redirectReferer
-  -- * Redirect Responses
-  , redirect3xx
-  , redirect301
-  , redirect302
-  , redirect303
-  -- * Text Responses
-  , text
-  , text200
-  , text403
-  , text404
-  , text410
-  , text500
-  , text503
-  -- * HTML Responses
-  , html
-  , html200
-  , html403
-  , html404
-  , html410
-  , html500
-  , html503
-  -- * JSON Responses
-  , json
-  , json200
-  , json403
-  , json404
-  , json410
-  , json500
-  , json503
-  -- * Sreaming Responses
-  , stream
-  , streamFile
-  -- * Helpers
-  , Fn.tempFileBackEnd'
+  , skip
+    -- * Utility Functions for Requests
+  , waiRequest
+  , waiRequestHeaders
+  , lookupRequestHeader
+  , getParams
+  , lookupParam
+  , decodeJsonBody
   ) where
 
 --------------------------------------------------------------------------------
-import qualified Blaze.ByteString.Builder.Char.Utf8 as Blaze
-import           Control.Concurrent.MVar             ( MVar
-                                                     , newMVar
-                                                     , tryTakeMVar
-                                                     , modifyMVar_
-                                                     )
-import           Control.Monad                       ( join )
-import           Control.Monad.IO.Class              ( MonadIO, liftIO )
-import           Control.Monad.Trans.Resource        ( InternalState
-                                                     , closeInternalState
-                                                     , createInternalState
-                                                     )
-import           Data.Aeson                          ( ToJSON, encode )
-import           Data.ByteString                     ( ByteString )
-import           Data.ByteString.Builder             ( lazyByteString )
-import           Data.Text                           ( Text )
-import qualified Data.Text.Encoding                 as Text
-import           Network.HTTP.Types                  ( Status
-                                                     , StdMethod(..)
-                                                     , ResponseHeaders
-                                                     )
-import qualified Network.HTTP.Types                 as Http
-import           Network.Wai                         ( Request(..)
-                                                     , Response
-                                                     , StreamingBody
-                                                     , Application
-                                                     , responseBuilder
-                                                     , responseStream
-                                                     )
-import           Network.Wai.Parse                   ( Param
-                                                     , parseRequestBody
-                                                     )
-import qualified Network.Wai.Parse                  as Parse
-import           Web.Fn                              ( FnRequest
-                                                     , Req
-                                                     , defaultFnRequest
-                                                     )
-import qualified Web.Fn                             as Fn
+import           Control.Arrow                 ( second )
+import           Control.Concurrent.MVar       ( newMVar, tryTakeMVar )
+import           Control.Monad                 ( join )
+import           Control.Monad.IO.Class        ( MonadIO, liftIO )
+import           Control.Monad.Reader          ( ReaderT(..)
+                                               , ask
+                                               , local
+                                               )
+import           Control.Monad.Trans.Resource  ( closeInternalState )
+import           Data.Aeson                    ( FromJSON, ToJSON )
+import qualified Data.Aeson                   as Json
+import           Data.ByteString               ( ByteString )
+import qualified Data.CaseInsensitive         as CI
+import           Data.Either                   ( lefts, rights )
+import           Data.Text                     ( Text )
+import qualified Data.Text                    as Text
+import qualified Data.Text.Encoding           as Text
+import           Data.Text.Read                ( decimal, double )
+import           Network.HTTP.Types            ( StdMethod(..)
+                                               , RequestHeaders
+                                               , Query
+                                               )
+import qualified Network.HTTP.Types           as Http
+import qualified Network.Mime                 as Mime
+import           Network.Wai                   ( Request(..)
+                                               , Response
+                                               , Application
+                                               , responseFile
+                                               , strictRequestBody
+                                               )
+import           Network.Wai.Parse             ( Param )
+import           System.Directory              ( doesFileExist )
+import           System.FilePath               ( takeExtension )
+--------------------------------------------------------------------------------
+import           Web.Fn.Internal               ( PostMVar, File(..), FnRequest )
+import qualified Web.Fn.Internal              as Internal
+import           Web.Fn.Response               ( FnResponse
+                                               , redirect303
+                                               , html200
+                                               , json200
+                                               , html500
+                                               )
 --------------------------------------------------------------------------------
 
 
@@ -124,12 +127,19 @@ import qualified Web.Fn                             as Fn
 -- Application setup
 
 
+-- | The Fn monad.
+
 class MonadIO m => Fn m where
   getRequest :: m FnRequest
   setRequest :: FnRequest -> m a -> m a
 
 
--- | Convert an Fn application. Provide a function to run monad 'm' into 'IO',
+instance Internal.RequestContext r => Fn (ReaderT r IO) where
+  getRequest = fmap Internal.getRequest ask
+  setRequest req = local (\ctxt -> Internal.setRequest ctxt req)
+
+
+-- | Convert an Fn application. Provide a function to run monad 'Fn m' into 'IO',
 -- and we'll create a WAI application by updating the 'FnRequest'
 -- value for each call.
 
@@ -148,9 +158,14 @@ toWai run app req cont = do
 -- Routing
 
 
+-- | The parts of the path, when split on /, and the query.
+
+type Req = (Request, [Text], Query, StdMethod, PostMVar)
+
+
 -- | The type of a route, constructed with @pattern ==> handler@.
 
-type Route m = Req -> m (Maybe (m (Maybe Response)))
+type Route m = Req -> m (Maybe (m FnResponse))
 
 
 -- | The main construct for Fn, 'route' takes a list of potential matches
@@ -161,20 +176,20 @@ type Route m = Req -> m (Maybe (m (Maybe Response)))
 -- app =
 --   route
 --     [ end ==> index
---     , path "foo" \/\/ path "bar" \/\/ segment \/? param "id" ==> h
+--     , path "foo" \/\/ path "bar" \/\/ segment \/\/ param "id" ==> h
 --     ]
 --
 --   where
---     index :: Fn m => m (Maybe Response)
+--     index :: Fn m => m FnResponse
 --     index =
 --       okText "This is the index."
 --
---     h :: Fn m => Text -> Text -> m (Maybe Response)
+--     h :: Fn m => Text -> Text -> m FnResponse
 --     h s i =
 --       okText ("got path \/foo\/" <> s <> ", with id=" <> i)
 -- @
 
-route :: Fn m => [Route m] -> m (Maybe Response)
+route :: Fn m => [Route m] -> m FnResponse
 route pths =
   do
     (r,post) <- getRequest
@@ -204,13 +219,13 @@ route pths =
 
 
 -- | The 'route' function (and all your handlers) return
--- @m (Maybe Response)@, because each can elect to not respond (in
+-- @m FnResponse@, because each can elect to not respond (in
 -- which case we will continue to match on routes). But to construct
 -- an application, we need a response in the case that nothing matched
 -- — this is what 'fallthrough' allows you to specify. In particular,
 -- 'notFoundText' and 'notFoundHtml' may be useful.
 
-fallthrough :: Monad m => m (Maybe Response) -> m Response -> m Response
+fallthrough :: Monad m => m FnResponse -> m Response -> m Response
 fallthrough a ft = do
   a >>= maybe ft return
 
@@ -255,7 +270,7 @@ fallthrough a ft = do
         return Nothing
 
       (r, Just mv) -> do
-        liftIO $ readBody mv r
+        liftIO $ Internal.readBody mv r
         rsp <- match req
         case rsp of
           Nothing ->
@@ -271,7 +286,7 @@ fallthrough a ft = do
 -- testing.
 
 (//) ::
-  Fn m =>
+  Monad m =>
   (r -> m (Maybe (r, k -> k'))) ->
   (r -> m (Maybe (r, k' -> a))) ->
   r -> m (Maybe (r, k -> a))
@@ -289,40 +304,126 @@ fallthrough a ft = do
 -- | Matches a literal part of the path. If there is no path part
 -- left, or the next part does not match, the whole match fails.
 
-path :: Fn m => Text -> Req -> m (Maybe (Req, a -> a))
+path :: Monad m => Text -> Req -> m (Maybe (Req, a -> a))
 path s req =
-  liftIO $ Fn.path s req
+  return $
+    case req of
+      (r,y:ys,q,m,x) | y == s -> Just ((r,ys, q, m, x), id)
+      _                       -> Nothing
 
 
 -- | Matches there being no parts of the path left. This is useful when
 -- matching index routes.
 
-end :: Fn m => Req -> m (Maybe (Req, a -> a))
+end :: Monad m => Req -> m (Maybe (Req, a -> a))
 end req =
-  liftIO $ Fn.end req
+  return $
+    case req of
+      (_,[],_,_,_) -> Just (req, id)
+      _            -> Nothing
 
 
 -- | Matches anything.
 
-anything :: Fn m => Req -> m (Maybe (Req, a -> a))
+anything :: Monad m => Req -> m (Maybe (Req, a -> a))
 anything req =
-  liftIO $ Fn.anything req
+  return $ Just (req, id)
 
 
 -- | Captures a part of the path. It will parse the part into the type
 -- specified by the handler it is matched to. If there is no segment, or
 -- if the segment cannot be parsed as such, it won't match.
 
-segment :: (Fn m, Fn.FromParam p) => Req -> m (Maybe (Req, (p -> a) -> a))
+segment :: (Monad m, FromParam p) => Req -> m (Maybe (Req, (p -> a) -> a))
 segment req =
-  liftIO $ Fn.segment req
+  return $
+    case req of
+      (r,y:ys,q,m,x) ->
+        case fromParam [y] of
+          Left _  -> Nothing
+          Right p -> Just ((r, ys, q, m, x), \k -> k p)
+
+      _ ->
+        Nothing
+
 
 
 -- | Matches on a particular HTTP method.
 
-method :: Fn m => StdMethod -> Req -> m (Maybe (Req, a -> a))
-method m r =
-  liftIO $ Fn.method m r
+method :: Monad m => StdMethod -> Req -> m (Maybe (Req, a -> a))
+method m r@(_,_,_,m',_) | m == m' = return $ Just (r, id)
+method _ _                        = return Nothing
+
+
+-- | Error returned when route parameter fails to parse into the expect type.
+
+data ParamError
+  = ParamMissing
+  | ParamTooMany
+  | ParamUnparsable
+  | ParamOtherError Text
+  deriving (Eq, Show)
+
+
+-- | A class that is used for parsing for 'param' and 'paramOpt'.
+-- and 'segment'.
+
+class FromParam a where
+  fromParam :: [Text] -> Either ParamError a
+
+
+instance FromParam Text where
+  fromParam [x] = Right x
+  fromParam []  = Left ParamMissing
+  fromParam _   = Left ParamTooMany
+
+
+instance FromParam Int where
+  fromParam [t] =
+    case decimal t of
+      Left _ ->
+        Left ParamUnparsable
+
+      Right m | snd m /= "" ->
+        Left ParamUnparsable
+
+      Right (v, _) ->
+        Right v
+
+  fromParam [] = Left ParamMissing
+  fromParam _  = Left ParamTooMany
+
+
+instance FromParam Double where
+  fromParam [t] =
+    case double t of
+      Left _ ->
+        Left ParamUnparsable
+
+      Right m | snd m /= "" ->
+        Left ParamUnparsable
+
+      Right (v, _) ->
+        Right v
+
+  fromParam [] = Left ParamMissing
+  fromParam _  = Left ParamTooMany
+
+
+instance FromParam a => FromParam [a] where
+  fromParam params =
+    let
+      res = fmap (fromParam . (:[])) params
+    in
+    case lefts res of
+      [] -> Right $ rights res
+      _  -> Left $ ParamOtherError "Couldn't parse all parameters."
+
+
+instance FromParam a => FromParam (Maybe a) where
+  fromParam [x] = Just <$> fromParam [x]
+  fromParam []  = Right Nothing
+  fromParam _   = Left ParamTooMany
 
 
 -- | Matches on a query parameter of the given name. It is parsed into
@@ -337,15 +438,50 @@ method m r =
 -- (so the pattern is matched to handler with '==>'), it will only
 -- match query parameters.
 
-param :: (Fn m, Fn.FromParam p) => Text -> Req -> m (Maybe (Req, (p -> a) -> a))
-param n req =
-  liftIO $ Fn.param n req
+param ::
+  (MonadIO m, FromParam p) => Text -> Req -> m (Maybe (Req, (p -> a) -> a))
+param n req@(_,_,q,_,mv) = do
+  ps <- liftIO (Internal.getMVarParams mv)
+  return $
+    case findParamMatches n (q ++ map (second Just) ps) of
+      Right y -> Just (req, \k -> k y)
+      Left _  -> Nothing
+
+
+-- | Checks if route has parameter. It will match whether the parameter is
+-- present or not, passing a 'Bool' value to the handler. If the parameter is
+-- not present, it will pass 'False' to the handler. If the parameter
+-- is present, even if it doesn't have a value (e.g @/foo?bar@ or @/foo?bar=@),
+-- it will pass 'True' to the handler.
+
+paramBool :: MonadIO m => Text -> Req -> m (Maybe (Req, (Bool -> a) -> a))
+paramBool n req@(_,_,q,_,mv) = do
+  ps <- liftIO (Internal.getMVarParams mv)
+  return $
+    case lookup (Text.encodeUtf8 n) (q ++ map (second Just) ps) of
+      Just _  -> Just (req, \k -> k True)
+      Nothing -> Just (req, \k -> k False)
+
+
+{-# DEPRECATED paramMany "Use 'param' with a list type, or define param parsing for non-empty list." #-}
+-- | Matches on query parameters of the given name. If there are no
+-- parameters, or they cannot be parsed into the type needed by the
+-- handler, it won't match.
+
+paramMany :: (MonadIO m, FromParam p) => Text -> Req -> m (Maybe (Req, ([p] -> a) -> a))
+paramMany n req@(_,_,q,_,mv) = do
+  ps <- liftIO (Internal.getMVarParams mv)
+  return $
+    case findParamMatches n (q ++ map (second Just) ps) of
+      Left _   -> Nothing
+      Right ys -> Just (req, \k -> k ys)
 
 
 -- | Like 'param' but provides a default value to the handler if the parameter
 -- is not present or cannot be parsed into the type expected by the handler.
 
-paramDef :: (Fn m, Fn.FromParam p) => Text -> p -> Req -> m (Maybe (Req, (p -> a) -> a))
+paramDef ::
+  (MonadIO m, FromParam p) => Text -> p -> Req -> m (Maybe (Req, (p -> a) -> a))
 paramDef n def req =
   param n req >>=
     \case
@@ -363,24 +499,32 @@ paramDef n def req =
 -- (so the pattern is matched to handler with '==>'), it will only
 -- match query parameters.
 
-paramOpt :: (Fn m, Fn.FromParam p) => Text -> Req -> m (Maybe (Req, (Either Fn.ParamError p -> a) -> a))
-paramOpt n req =
-  liftIO $ Fn.paramOpt n req
+paramOpt ::
+  (MonadIO m, FromParam p) =>
+  Text -> Req -> m (Maybe (Req, (Either ParamError p -> a) -> a))
+paramOpt n req@(_,_,q,_,mv) = do
+  ps <- liftIO (Internal.getMVarParams mv)
+  return $ Just (req, \k -> k (findParamMatches n (q ++ map (second Just) ps)))
 
 
 -- | Matches an uploaded file with the given parameter name.
 
-file :: Fn m => Text -> Req -> m (Maybe (Req, (Fn.File -> a) -> a))
-file n req =
-  liftIO $ Fn.file n req
+file :: MonadIO m => Text -> Req -> m (Maybe (Req, (File -> a) -> a))
+file n req@(r,_,_,_,mv) = do
+  fs <- liftIO (Internal.getMVarFiles mv r)
+  return $
+    case filter ((== n) . fst) fs of
+      [(_, f)] -> Just (req, \k -> k f)
+      _        -> Nothing
 
 
 -- | Matches all uploaded files, passing their parameter names and
 -- contents.
 
-files :: Fn m => Req -> m (Maybe (Req, ([(Text, Fn.File)] -> a) -> a))
-files req =
-  liftIO $ Fn.files req
+files :: MonadIO m => Req -> m (Maybe (Req, ([(Text, File)] -> a) -> a))
+files req@(r,_,_,_,mv) = do
+  fs <- liftIO (Internal.getMVarFiles mv r)
+  return $ Just (req, \k -> k fs)
 
 
 --------------------------------------------------------------------------------
@@ -402,9 +546,14 @@ files req =
 -- If no file is found, or if the path has @..@ or starts with @/@,
 -- this will continue routing.
 
-staticServe :: Fn m => Text -> m (Maybe Response)
-staticServe d =
-  getRequest >>= liftIO . Fn.staticServe d
+staticServe :: Fn m => Text -> m FnResponse
+staticServe directory = do
+  req <- fmap fst getRequest
+  let pth = Text.intercalate "/" (directory : pathInfo req)
+  if "/" `Text.isPrefixOf` pth || ".." `Text.isInfixOf` pth then
+    return Nothing
+  else
+    sendFile (Text.unpack pth)
 
 
 -- | Sends a specific file specified by path. It will specify the
@@ -412,340 +561,181 @@ staticServe d =
 --
 -- If no file exists at the given path, it will keep routing.
 
-sendFile :: FilePath -> IO (Maybe Response)
-sendFile =
-  liftIO . Fn.sendFile
+sendFile :: MonadIO m => FilePath -> m FnResponse
+sendFile pth = do
+  exists <- liftIO (doesFileExist pth)
+  if exists then
+    let
+      contentType =
+        [ ( Http.hContentType
+          , Mime.defaultMimeLookup (Text.pack (takeExtension pth))
+          )
+        ]
+    in
+    return $ Just $ responseFile Http.status200 contentType pth Nothing
+  else
+    return Nothing
 
 
 -- | Returns 'Text' as a plain text response (@text/plain@)
 -- with 200 status code.
 
-okText :: Fn m => Text -> m (Maybe Response)
-okText =
-  liftIO . Fn.okText
+okText :: Monad m => Text -> m FnResponse
+okText body =
+  fmap Just $ Internal.waiPlainText Http.status200 body
+
 
 
 -- | Returns 'Text' as a JSON response (@application/json@)
 -- with 200 status code.
 
-okJson :: Fn m => Text -> m (Maybe Response)
+okJson :: Monad m => Text -> m FnResponse
 okJson =
-  liftIO . Fn.okJson
+  json200
 
 
 -- | Returns Html (in 'Text') as a response (@text/html@)
 -- with 200 status code.
 
-okHtml :: Fn m => Text -> m (Maybe Response)
+okHtml :: Monad m => Text -> m FnResponse
 okHtml =
-  liftIO . Fn.okHtml
+  html200
 
 
 -- | Returns 'Text' as a plain text response (@text/plain@)
 -- with a 500 status code.
 
-errText :: Fn m => Text -> m (Maybe Response)
-errText =
-  liftIO . Fn.errText
+errText :: Monad m => Text -> m FnResponse
+errText body =
+  fmap Just $ Internal.waiPlainText Http.status500 body
 
 
 -- | Returns Html (in 'Text') as a response (@text/html@)
 -- with 500 status code.
 
-errHtml :: Fn m => Text -> m (Maybe Response)
+errHtml :: Monad m => Text -> m FnResponse
 errHtml =
-  liftIO . Fn.errHtml
+  html500
 
 
 -- | Returns a 404 with the given 'Text' as a body. Note that this
--- returns a @m Response@ not an @m (Maybe Response)@ because the
+-- returns a @m Response@ not an @m FnResponse@ because the
 -- expectation is that you are calling this with 'fallthrough'.
 
-notFoundText :: Fn m => Text -> m Response
-notFoundText =
-  liftIO . Fn.notFoundText
+notFoundText :: Monad m => Text -> m Response
+notFoundText body =
+  Internal.waiPlainText Http.status404 body
 
 
 -- | Returns a 404 with the given html as a body. Note that this
--- returns a @m Response@ not an @m (Maybe Response)@ because the
+-- returns a @m Response@ not an @m FnResponse@ because the
 -- expectation is that you are calling this with 'fallthrough'.
 
-notFoundHtml :: Fn m => Text -> m Response
-notFoundHtml =
-  liftIO . Fn.notFoundHtml
+notFoundHtml :: Monad m => Text -> m Response
+notFoundHtml body =
+  Internal.waiHtml Http.status404 body
+
+
+-- | Returns a 404 with the given html as a body. Note that this
+-- returns a @m Response@ not an @m FnResponse@ because the
+-- expectation is that you are calling this with 'fallthrough'.
+
+notFoundJson :: (Monad m, ToJSON a) => a -> m Response
+notFoundJson val =
+  Internal.waiJson Http.status404 val
 
 
 -- | Redirects to the given url with 303 status code (See Other).
 -- Note that the target is not validated, so it should be an absolute path/url.
 
-redirect :: Fn m => Text -> m (Maybe Response)
+redirect :: Monad m => Text -> m FnResponse
 redirect =
-  liftIO . Fn.redirect
+  redirect303
 
 
 -- | Redirects to the referrer, if present in headers, else to "/".
 
-redirectReferer :: Fn m => m (Maybe Response)
-redirectReferer =
-  getRequest >>= liftIO . Fn.redirectReferer
+redirectReferer :: Fn m => m FnResponse
+redirectReferer = do
+  headers <- fmap (requestHeaders . fst) getRequest
+  case lookup Http.hReferer headers of
+    Nothing      -> redirect "/"
+    Just referer -> redirect (Text.decodeUtf8 referer)
+
+
+-- | Skip over the current route, causing the Fn application to continue
+-- attempting to match on any routes that might follow.
+
+skip :: Monad m => m FnResponse
+skip =
+  return Nothing
 
 
 --------------------------------------------------------------------------------
--- Redirect Responses
+-- Utility Functions for Requests
 
 
--- | Returns a redirect response with the given status code and url.
--- Note that the target is not validated, so it should be an absolute path/url.
+-- | Returns the WAI 'Request' directly.
 
-redirect3xx :: Fn m => Status -> Text -> m (Maybe Response)
-redirect3xx status target =
-  return . Just
-    $ responseBuilder status [(Http.hLocation, Text.encodeUtf8 target)]
-    $ Blaze.fromText ""
+waiRequest :: Fn m => m Request
+waiRequest =
+  fmap fst getRequest
 
 
--- | Redirects to the given url with 301 status code (Moved Permanently).
--- Note that the target is not validated, so it should be an absolute path/url.
+-- | Returns the WAI 'RequestHeaders' directly.
 
-redirect301 :: Fn m => Text -> m (Maybe Response)
-redirect301 target =
-  redirect3xx Http.status301 target
-
-
--- | Redirects to the given url with 302 status code (Found).
--- Note that the target is not validated, so it should be an absolute path/url.
-
-redirect302 :: Fn m => Text -> m (Maybe Response)
-redirect302 target =
-  redirect3xx Http.status302 target
+waiRequestHeaders :: Fn m => m RequestHeaders
+waiRequestHeaders =
+  fmap requestHeaders waiRequest
 
 
--- | Redirects to the given url with 303 status code (See Other).
--- Note that the target is not validated, so it should be an absolute path/url.
+-- | Returns the value for the given request header key, if it exists.
 
-redirect303 :: Fn m => Text -> m (Maybe Response)
-redirect303 =
-  redirect
-
-
---------------------------------------------------------------------------------
--- Text Responses
+lookupRequestHeader :: Fn m => Text -> m (Maybe Text)
+lookupRequestHeader name = do
+  headers <- waiRequestHeaders
+  return $ fmap Text.decodeUtf8 $ lookup (CI.mk (Text.encodeUtf8 name)) headers
 
 
--- | Returns a response with the given status code, mime type, and 'Text' body.
+-- | Returns all of the query params in an 'FnRequest'
 
-text :: Fn m => Status -> ByteString -> Text -> m (Maybe Response)
-text status content body =
-  return $ Just $
-    responseBuilder status [(Http.hContentType, content)] (Blaze.fromText body)
-
-
--- | Returns a 200 (OK) response with the given mime type and 'Text' body.
-
-text200 :: Fn m => ByteString -> Text -> m (Maybe Response)
-text200 content body =
-  text Http.status200 content body
+getParams :: Fn m => m [Param]
+getParams = do
+  (_, postMVar) <- getRequest
+  liftIO (Internal.getMVarParams postMVar)
 
 
--- | Returns a 403 (Forbidden) response with the given mime type
--- and 'Text' body.
+-- | Returns the value for the given query parameter, parsed into the expected
+-- type.
 
-text403 :: Fn m => ByteString -> Text -> m (Maybe Response)
-text403 content body =
-  text Http.status403 content body
-
-
--- | Returns a 404 (Not Found) response with the given mime type
--- and 'Text' body.
-
-text404 :: Fn m => ByteString -> Text -> m (Maybe Response)
-text404 content body =
-  text Http.status404 content body
+lookupParam :: (Fn m, FromParam p) => Text -> m (Maybe p)
+lookupParam name = do
+  params <- getParams
+  case findParamMatches name (fmap (second Just) params) of
+    Right p -> return (Just p)
+    Left  _ -> return Nothing
 
 
--- | Returns a 410 (Gone) response with the given mime type and 'Text' body.
+-- | Decode the JSON request body into the expected value.
 
-text410 :: Fn m => ByteString -> Text -> m (Maybe Response)
-text410 content body =
-  text Http.status410 content body
+decodeJsonBody :: (Fn m, FromJSON a) => m (Either Text a)
+decodeJsonBody = do
+  body <- waiRequest >>= liftIO . strictRequestBody
+  case Json.eitherDecode body of
+    Left err    -> return (Left $ Text.pack err)
+    Right value -> return (Right value)
 
-
--- | Returns a 500 (Internal Server Error) response with the given mime type
--- and 'Text' body.
-
-text500 :: Fn m => ByteString -> Text -> m (Maybe Response)
-text500 content body =
-  text Http.status500 content body
-
-
--- | Returns a 503 (Service Unavailable) response with the given mime type
--- and 'Text' body.
-
-text503 :: Fn m => ByteString -> Text -> m (Maybe Response)
-text503 content body =
-  text Http.status503 content body
 
 
 --------------------------------------------------------------------------------
--- HTML Responses
+-- Helpers
 
 
--- | Returns a @text/html@ response with the given 'Status' code
--- and a response body with the given 'Text' as HTML.
-
-html :: Fn m => Status -> Text -> m (Maybe Response)
-html status body =
-  text status "text/html; charset=utf-8" body
-
-
--- | Returns a response with a 200 (OK) status code
--- and a response body with the given 'Text' as HTML.
-
-html200 :: Fn m => Text -> m (Maybe Response)
-html200 =
-  html Http.status200
-
-
--- | Returns a response with a 403 (Forbidden) status code
--- and a response body with the given 'Text' as HTML.
-
-html403 :: Fn m => Text -> m (Maybe Response)
-html403 =
-  html Http.status403
-
-
--- | Returns a response with a 404 (Not Found) status code
--- and a response body with the given 'Text' as HTML.
-
-html404 :: Fn m => Text -> m (Maybe Response)
-html404 =
-  html Http.status404
-
-
--- | Returns a response with a 410 (Gone) status code
--- and a response body with the given 'Text' as HTML.
-
-html410 :: Fn m => Text -> m (Maybe Response)
-html410 =
-  html Http.status410
-
-
--- | Returns a response with a 500 (Internal Server Error) status code
--- and a response body with the given 'Text' as HTML.
-
-html500 :: Fn m => Text -> m (Maybe Response)
-html500 =
-  html Http.status500
-
-
--- | Returns a response with a 503 (Service Unavailable) status code
--- and a response body with the given 'Text' as HTML.
-
-html503 :: Fn m => Text -> m (Maybe Response)
-html503 =
-  html Http.status503
-
-
---------------------------------------------------------------------------------
--- JSON Responses
-
-
--- | Returns a @application/json@ response with the given 'Status' code
--- and a response body with the JSON encoding of the given value 'a'.
-
-json :: (Fn m, ToJSON a) => Status -> a -> m (Maybe Response)
-json status val =
-  return
-    $ Just
-    $ responseBuilder status [(Http.hContentType, "application/json; charset=utf-8")]
-    $ lazyByteString
-    $ encode val
-
-
--- | Returns a response with a 200 (OK) status code
--- and a response body with the JSON encoding of the given value 'a'.
-
-json200 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
-json200 =
-  json Http.status200
-
-
--- | Returns a response with a 403 (Forbidden) status code
--- and a response body with the JSON encoding of the given value 'a'.
-
-json403 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
-json403 =
-  json Http.status403
-
-
--- | Returns a response with a 404 (Not Found) status code
--- and a response body with the JSON encoding of the given value 'a'.
-
-json404 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
-json404 =
-  json Http.status404
-
-
--- | Returns a response with a 410 (Gone) status code
--- and a response body with the JSON encoding of the given value 'a'.
-
-json410 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
-json410 =
-  json Http.status410
-
-
--- | Returns a response with a 500 (Internal Service Error) status code
--- and a response body with the JSON encoding of the given value 'a'.
-
-json500 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
-json500 =
-  json Http.status500
-
-
--- | Returns a response with a 503 (Service Unavailable) status code
--- and a response body with the JSON encoding of the given value 'a'.
-
-json503 :: (Fn m, ToJSON a) => a -> m (Maybe Response)
-json503 =
-  json Http.status503
-
-
---------------------------------------------------------------------------------
--- Streaming Responses
-
-
--- | Returns a streaming response with the given 'ResponseHeaders'
--- and 'StreamingBody'.
-
-stream :: Fn m => ResponseHeaders -> StreamingBody -> m (Maybe Response)
-stream headers body =
-  return . Just $ responseStream Http.status200 headers body
-
-
--- | Returns a streaming response with the given file name and 'StreamingBody'.
-
-streamFile :: Fn m => ByteString -> StreamingBody -> m (Maybe Response)
-streamFile filename body =
-  stream
-    [ ( "Content-Disposition"
-      , "attachment; filename=\"" <> filename <> "\""
-      )
-    ]
-    body
-
-
---------------------------------------------------------------------------------
-
-
-readBody :: MVar (Maybe (([Param], [Parse.File FilePath]), InternalState)) -> Request -> IO ()
-readBody mv req =
-  modifyMVar_ mv $
-    \r ->
-      case r of
-        Nothing -> do
-          is <- createInternalState
-          rb <- parseRequestBody (Fn.tempFileBackEnd' is) req
-          return (Just (rb, is))
-
-        Just _ ->
-          return r
+findParamMatches ::
+  FromParam p =>
+  Text -> [(ByteString, Maybe ByteString)] -> Either ParamError p
+findParamMatches name params =
+  fromParam
+    $ map (maybe "" (Text.decodeUtf8With (\_ _ -> Just '\65533')) . snd)
+    $ filter ((== Text.encodeUtf8 name) . fst)
+    $ params
