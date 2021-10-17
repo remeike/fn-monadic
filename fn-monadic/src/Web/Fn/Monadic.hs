@@ -5,8 +5,21 @@
 
 {-|
 
-TK
+This package provides a simple framework for routing and responses.
+It exposes two different interfaces: an IO-based interface that can be
+found in Web.Fn and the more generic, monad-based interface found
+in this module.
 
+The two primary goals of the monadic interface are:
+
+1. All web handler functions work with instances of the Fn typeclass.
+This makes the library easily compatible with many different types of
+application architectures.
+
+2. Web handlers are functions with typed parameters. When routing, we
+specify many parameters (most commonly, numeric ids, but can be many
+things), so the handlers should be functions that take those as
+parameters.
 -}
 
 
@@ -56,7 +69,7 @@ module Web.Fn.Monadic
   , skip
     -- * Utility Functions for Requests
   , waiRequest
-  , getRequestHeaders
+  , waiRequestHeaders
   , lookupRequestHeader
   , getParams
   , lookupParam
@@ -107,7 +120,6 @@ import           Web.Fn.Response               ( FnResponse
                                                , html500
                                                )
 --------------------------------------------------------------------------------
-
 
 
 
@@ -436,7 +448,11 @@ param n req@(_,_,q,_,mv) = do
       Left _  -> Nothing
 
 
--- | TK
+-- | Checks if route has parameter. It will match whether the parameter is
+-- present or not, passing a 'Bool' value to the handler. If the parameter is
+-- not present, it will pass 'False' to the handler. If the parameter
+-- is present, even if it doesn't have a value (e.g @/foo?bar@ or @/foo?bar=@),
+-- it will pass 'True' to the handler.
 
 paramBool :: MonadIO m => Text -> Req -> m (Maybe (Req, (Bool -> a) -> a))
 paramBool n req@(_,_,q,_,mv) = do
@@ -647,7 +663,7 @@ redirectReferer = do
     Just referer -> redirect (Text.decodeUtf8 referer)
 
 
--- | Skip over the current and cause the Fn application to continue
+-- | Skip over the current route, causing the Fn application to continue
 -- attempting to match on any routes that might follow.
 
 skip :: Monad m => m FnResponse
@@ -668,8 +684,8 @@ waiRequest =
 
 -- | Returns the WAI 'RequestHeaders' directly.
 
-getRequestHeaders :: Fn m => m RequestHeaders
-getRequestHeaders =
+waiRequestHeaders :: Fn m => m RequestHeaders
+waiRequestHeaders =
   fmap requestHeaders waiRequest
 
 
@@ -677,7 +693,7 @@ getRequestHeaders =
 
 lookupRequestHeader :: Fn m => Text -> m (Maybe Text)
 lookupRequestHeader name = do
-  headers <- getRequestHeaders
+  headers <- waiRequestHeaders
   return $ fmap Text.decodeUtf8 $ lookup (CI.mk (Text.encodeUtf8 name)) headers
 
 
@@ -701,9 +717,6 @@ lookupParam name = do
 
 
 -- | Decode the JSON request body into the expected value.
-
--- Note: Since this function consumes the request body,
--- future calls to it will return the empty string.
 
 decodeJsonBody :: (Fn m, FromJSON a) => m (Either Text a)
 decodeJsonBody = do

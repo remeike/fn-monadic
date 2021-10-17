@@ -5,8 +5,12 @@
 
 {-|
 
-This package provides a simple framework for routing and responses. The
-two primary goals are:
+This package provides a simple framework for routing and responses.
+It exposes two different interfaces: a more generic, monad-based
+interface that can be found in Web.Fn.Monadic and the IO-based interface
+found in this module.
+
+The two primary goals of the IO interface are:
 
 1. All web handler functions are just plain IO. There is no Fn
 monad, or monad transformer. This has a lot of nice properties,
@@ -70,7 +74,7 @@ module Web.Fn
   , Fn.skip
     -- * Utility Functions for Requests
   , waiRequest
-  , getRequestHeaders
+  , waiRequestHeaders
   , lookupRequestHeader
   , getParams
   , lookupParam
@@ -247,9 +251,9 @@ waiRequest ctxt =
 
 -- | Returns the WAI 'RequestHeaders' directly.
 
-getRequestHeaders :: RequestContext ctxt => ctxt -> IO RequestHeaders
-getRequestHeaders ctxt =
-  runReaderT Fn.getRequestHeaders ctxt
+waiRequestHeaders :: RequestContext ctxt => ctxt -> IO RequestHeaders
+waiRequestHeaders ctxt =
+  runReaderT Fn.waiRequestHeaders ctxt
 
 
 -- | Returns the value for the given request header key, if it exists.
@@ -276,9 +280,6 @@ lookupParam ctxt name =
 
 
 -- | Decode the JSON request body into the expected value.
-
--- Note: Since this function consumes the request body,
--- future calls to it will return the empty string.
 
 decodeJsonBody ::
   (RequestContext ctxt, FromJSON a) => ctxt -> IO (Either Text a)

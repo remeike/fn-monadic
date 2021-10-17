@@ -4,8 +4,9 @@
 
 {-|
 
-TK
-
+This module provides a set of functions for responses. Because they
+return generic 'Monad' instances, each function is compatible with
+the interfaces exposed by both Web.Fn and Web.Fn.Monadic.
 -}
 
 
@@ -200,7 +201,7 @@ html202 =
 
 html400 :: Monad m => Text -> m FnResponse
 html400 =
-  html Http.status403
+  html Http.status400
 
 
 -- | Returns a response with a 401 (Unauthorized) status code
@@ -208,7 +209,7 @@ html400 =
 
 html401 :: Monad m => Text -> m FnResponse
 html401 =
-  html Http.status403
+  html Http.status401
 
 
 -- | Returns a response with a 403 (Forbidden) status code

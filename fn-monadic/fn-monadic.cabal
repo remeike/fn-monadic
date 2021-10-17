@@ -1,6 +1,5 @@
 name:           fn-monadic
 version:        0.1.0.0
-description:    A monadic wrapper around the Fn web framework.
 homepage:       https://github.com/githubuser/fn-monadic#readme
 bug-reports:    https://github.com/githubuser/fn-monadic/issues
 author:         Remeike Forbes
@@ -11,6 +10,8 @@ license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
 cabal-version:  >= 1.10
+description:
+  A fork of the Fn web framework, with an additional monadic interface.
 
 source-repository head
   type:     git
@@ -44,7 +45,6 @@ test-suite fn-monadic-test
   hs-source-dirs:      test
                      , src
   main-is:             Spec.hs
-  -- other-modules:       Web.Fn
   build-depends:       base
                      , aeson
                      , blaze-builder
