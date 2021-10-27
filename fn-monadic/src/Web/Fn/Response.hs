@@ -15,7 +15,8 @@ module Web.Fn.Response
     -- * Response Constructors
   , redirect3xx
   , text
-  , bytes
+  , bytestring
+  , plain
   , html
   , json
   , stream
@@ -24,6 +25,16 @@ module Web.Fn.Response
   , redirect301
   , redirect302
   , redirect303
+    -- * Plain Text Responses
+  , plain200
+  , plain201
+  , plain202
+  , plain400
+  , plain401
+  , plain403
+  , plain404
+  , plain410
+  , plain500
     -- * HTML Responses
   , html200
   , html201
@@ -44,18 +55,19 @@ module Web.Fn.Response
   , json404
   , json410
   , json500
-    -- * Streaming Responses
+    -- * File Responses
   , streamFile
+  , bytestringFile
   ) where
 
 
 --------------------------------------------------------------------------------
 import           Data.Aeson              ( ToJSON )
-import           Data.ByteString.Char8  as ByteChar
 import           Data.ByteString         ( ByteString )
 import qualified Data.ByteString.Lazy   as LBS
 import           Data.Text               ( Text )
 import qualified Data.Text              as Text
+import qualified Data.Text.Encoding     as TE
 import           Network.HTTP.Types      ( Status, ResponseHeaders )
 import qualified Network.HTTP.Types     as Http
 import qualified Network.Mime           as Mime
@@ -64,7 +76,7 @@ import qualified Network.Wai            as Wai
 import           System.FilePath         ( takeExtension )
 --------------------------------------------------------------------------------
 import           Web.Fn.Internal         ( waiRedirect, waiText, waiHtml
-                                         , waiJson
+                                         , waiJson, waiPlainText
                                          )
 --------------------------------------------------------------------------------
 
@@ -97,9 +109,17 @@ text status contentType body =
 
 -- | Returns a response with the given status code, mime type, and 'ByteString' body.
 
-bytes :: Monad m => Status -> ByteString -> LBS.ByteString -> m FnResponse
-bytes status contentType body =
+bytestring :: Monad m => Status -> ByteString -> LBS.ByteString -> m FnResponse
+bytestring status contentType body =
   return . Just $ Wai.responseLBS status [(Http.hContentType, contentType)] body
+
+
+-- | Returns a @text/plain@ response with the given 'Status' code
+-- and a response body with the given 'Text'.
+
+plain :: Monad m => Status -> Text -> m FnResponse
+plain status body =
+  fmap Just $ waiPlainText status body
 
 
 -- | Returns a @text/html@ response with the given 'Status' code
@@ -165,6 +185,83 @@ redirect302 target =
 redirect303 :: Monad m => Text -> m FnResponse
 redirect303 target =
   redirect3xx Http.status303 target
+
+
+
+--------------------------------------------------------------------------------
+-- Plain Text Responses
+
+
+-- | Returns a response with a 200 (OK) status code
+-- and a response body with the given 'Text' as plain text.
+
+plain200 :: Monad m => Text -> m FnResponse
+plain200 =
+  plain Http.status200
+
+
+-- | Returns a response with a 201 (Created) status code
+-- and a response body with the given 'Text' as plain text.
+
+plain201 :: Monad m => Text -> m FnResponse
+plain201 =
+  plain Http.status201
+
+
+-- | Returns a response with a 202 (Accepted) status code
+-- and a response body with the given 'Text' as plain text.
+
+plain202 :: Monad m => Text -> m FnResponse
+plain202 =
+  plain Http.status202
+
+
+-- | Returns a response with a 400 (Bad Request) status code
+-- and a response body with the given 'Text' as plain text.
+
+plain400 :: Monad m => Text -> m FnResponse
+plain400 =
+  plain Http.status400
+
+
+-- | Returns a response with a 401 (Unauthorized) status code
+-- and a response body with the given 'Text' as plain text.
+
+plain401 :: Monad m => Text -> m FnResponse
+plain401 =
+  plain Http.status401
+
+
+-- | Returns a response with a 403 (Forbidden) status code
+-- and a response body with the given 'Text' as plain text.
+
+plain403 :: Monad m => Text -> m FnResponse
+plain403 =
+  plain Http.status403
+
+
+-- | Returns a response with a 404 (Not Found) status code
+-- and a response body with the given 'Text' as plain text.
+
+plain404 :: Monad m => Text -> m FnResponse
+plain404 =
+  plain Http.status404
+
+
+-- | Returns a response with a 410 (Gone) status code
+-- and a response body with the given 'Text' as plain text.
+
+plain410 :: Monad m => Text -> m FnResponse
+plain410 =
+  plain Http.status410
+
+
+-- | Returns a response with a 500 (Internal Server Error) status code
+-- and a response body with the given 'Text' as plain text.
+
+plain500 :: Monad m => Text -> m FnResponse
+plain500 =
+  plain Http.status500
 
 
 
@@ -323,20 +420,37 @@ json500 =
 
 
 --------------------------------------------------------------------------------
--- Streaming Responses
+-- File Responses
 
 
 -- | Returns a streaming response with the given file name and 'StreamingBody'.
 
-streamFile :: Monad m => String -> StreamingBody -> m FnResponse
+streamFile :: Monad m => Text -> StreamingBody -> m FnResponse
 streamFile filename body =
   let
     contentType =
-      Mime.defaultMimeLookup (Text.pack (takeExtension filename))
+      Mime.defaultMimeLookup (Text.pack (takeExtension (Text.unpack filename)))
 
     contentDisposition =
       ( "Content-Disposition"
-      , "attachment; filename=\"" <> ByteChar.pack filename <> "\""
+      , "attachment; filename=\"" <> TE.encodeUtf8 filename <> "\""
       )
   in
   setResponseHeaders (contentDisposition :) $ stream contentType body
+
+
+-- | Returns a response with the given file name and lazy ByteString body.
+
+bytestringFile :: Monad m => Text -> LBS.ByteString -> m FnResponse
+bytestringFile filename body =
+  let
+    contentType =
+      Mime.defaultMimeLookup (Text.pack (takeExtension (Text.unpack filename)))
+
+    contentDisposition =
+      ( "Content-Disposition"
+      , "attachment; filename=\"" <> TE.encodeUtf8 filename <> "\""
+      )
+  in
+  setResponseHeaders (contentDisposition :) $
+    bytestring Http.status200 contentType body
