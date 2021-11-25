@@ -13,7 +13,7 @@ packages:
     hackage: digestive-functors-0.8.4.2@sha256:badff1797b6dcd860a48ed4558985b2f6bec501e1016fa5afd9d7d6b0d8e4c08,3364
 snapshots:
 - completed:
-    size: 495200
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/13/6.yaml
-    sha256: 3baf62db5746f24561641bc15aadddbf5c973a5a1d587beb9eb9ddb4cf5628eb
-  original: lts-13.6
+    size: 586296
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/18.yaml
+    sha256: 63539429076b7ebbab6daa7656cfb079393bf644971156dc349d7c0453694ac2
+  original: lts-18.18

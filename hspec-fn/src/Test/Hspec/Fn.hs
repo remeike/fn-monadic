@@ -88,6 +88,7 @@ import           Control.Monad.Trans          (liftIO)
 import           Data.Aeson                   (ToJSON, encode)
 import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as B (empty, unpack)
+import qualified Data.ByteString.Char8        as BC
 import           Data.ByteString.Lazy         (fromStrict, toStrict)
 import qualified Data.ByteString.Lazy         as LBS
 import           Data.ByteString.Lazy.Builder (Builder)
@@ -688,7 +689,7 @@ parse200 resp =
         headers     = responseHeaders resp
         contentType = T.decodeUtf8 $ fromMaybe "" $ lookup hContentType headers in
     if "application/json" `T.isPrefixOf` contentType
-      then Json 200 . fromStrict <$> body
+      then Json 200 . read . BC.unpack <$> body
       else Html 200 . T.decodeUtf8 <$> body
 
 -- | Runs a request against a given handler (often the whole site),
