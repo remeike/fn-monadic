@@ -31,10 +31,11 @@ runForm ctxt nm frm k =
     let
       r = fst (getRequest ctxt)
     in
-    if requestMethod r == methodPost then do
-      env <- requestFormEnv (getRequest ctxt)
-      r' <- liftIO $ postForm nm frm (const (return env))
-      liftIO $ k r'
-    else do
-      r' <- (,Nothing) <$> liftIO (getForm nm frm)
-      liftIO $ k r'
+    if requestMethod r == methodPost
+      then do
+        env <- requestFormEnv (getRequest ctxt)
+        r' <- liftIO $ postForm nm frm (const (return env))
+        liftIO $ k r'
+      else do
+        r' <- (,Nothing) <$> liftIO (getForm nm frm)
+        liftIO $ k r'

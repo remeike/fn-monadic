@@ -27,10 +27,11 @@ import           Web.Fn.Digestive.Internal     ( requestFormEnv )
 runForm :: Fn m => Text -> Form v m a -> ((View v, Maybe a) -> m a1) -> m a1
 runForm nm frm k = do
   fnReq <- getRequest
-  if requestMethod (fst fnReq) == methodPost then do
-    env <- liftIO $ runResourceT (requestFormEnv fnReq)
-    req <- postForm nm frm (const (return (fmap liftIO env)))
-    k req
-  else do
-    req <- (,Nothing) <$> getForm nm frm
-    k req
+  if requestMethod (fst fnReq) == methodPost
+    then do
+      env <- liftIO $ runResourceT (requestFormEnv fnReq)
+      req <- postForm nm frm (const (return (fmap liftIO env)))
+      k req
+    else do
+      req <- (,Nothing) <$> getForm nm frm
+      k req
