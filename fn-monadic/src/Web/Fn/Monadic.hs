@@ -91,6 +91,7 @@ import qualified Data.Aeson                   as Json
 import           Data.ByteString               ( ByteString )
 import qualified Data.CaseInsensitive         as CI
 import           Data.Either                   ( lefts, rights )
+import           Data.Maybe                    ( fromMaybe )
 import           Data.Text                     ( Text )
 import qualified Data.Text                    as Text
 import qualified Data.Text.Encoding           as Text
@@ -106,6 +107,7 @@ import           Network.Wai                   ( Request(..)
                                                , Application
                                                , responseFile
                                                , strictRequestBody
+                                               , queryString
                                                )
 import           Network.Wai.Parse             ( Param )
 import           System.Directory              ( doesFileExist )
@@ -701,8 +703,9 @@ lookupRequestHeader name = do
 
 getParams :: Fn m => m [Param]
 getParams = do
-  (_, postMVar) <- getRequest
-  liftIO (Internal.getMVarParams postMVar)
+  (req, postMVar) <- getRequest
+  ps <- liftIO (Internal.getMVarParams postMVar)
+  return $ fmap (fmap (fromMaybe "")) (queryString req) ++ ps
 
 
 -- | Returns the value for the given query parameter, parsed into the expected
