@@ -90,8 +90,8 @@ import           Data.ByteString              (ByteString)
 import qualified Data.ByteString              as B (empty, unpack)
 import           Data.ByteString.Lazy         (fromStrict, toStrict)
 import qualified Data.ByteString.Lazy         as LBS
-import           Data.ByteString.Lazy.Builder (Builder)
-import qualified Data.ByteString.Lazy.Builder as Builder
+import           Data.ByteString.Builder      (Builder)
+import qualified Data.ByteString.Builder      as Builder
 import qualified Data.Char                    as Char
 import           Data.IORef                   (atomicModifyIORef, newIORef,
                                                readIORef)
